@@ -1,0 +1,28 @@
+[project]
+name = "pal"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "jscheltema",email = "j.scheltema@marktlink.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas (>=3.0.1,<4.0.0)",
+    "opencv-python (>=4.13.0.92,<5.0.0.0)",
+    "numpy (>=2.4.3,<3.0.0)",
+    "matplotlib (>=3.10.8,<4.0.0)",
+    "ultralytics (>=8.4.33,<9.0.0)",
+    "ollama (>=0.6.1,<0.7.0)",
+    "pynput (>=1.8.1,<2.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "ipykernel (>=7.2.0,<8.0.0)"
+]
