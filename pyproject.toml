@@ -6,7 +6,7 @@ authors = [
     {name = "jscheltema",email = "j.scheltema@marktlink.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "pandas (>=3.0.1,<4.0.0)",
     "opencv-python (>=4.13.0.92,<5.0.0.0)",
@@ -14,7 +14,9 @@ dependencies = [
     "matplotlib (>=3.10.8,<4.0.0)",
     "ultralytics (>=8.4.33,<9.0.0)",
     "ollama (>=0.6.1,<0.7.0)",
-    "pynput (>=1.8.1,<2.0.0)"
+    "pynput (>=1.8.1,<2.0.0)",
+    "transformers (>=5.5.0,<6.0.0)",
+    "moondream (>=1.1.0,<2.0.0)",
 ]
 
 

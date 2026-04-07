@@ -2,15 +2,17 @@ import ollama
 import cv2
 import base64
 
-MODEL = "qwen3.5:2b"
+### QWEN APPROACH
 
-def interpret_image(image):
+MODEL = "qwen3.5:0.8b"
+
+def interpret_image(image, context):
     response = ollama.chat(
         model=MODEL,
         messages=[
             {
                 "role": "user",
-                "content": "Analyse the image in terms of threat level. Scan for weapons, hostility or other signs of danger.",
+                "content": f"Describe the image in one concise sentence. There is a {context} in the image.",
                 "images": [numpy_to_base64(image)]  # ✅ attach image here
             }
         ]
