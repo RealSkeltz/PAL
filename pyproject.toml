@@ -17,6 +17,11 @@ dependencies = [
     "pynput (>=1.8.1,<2.0.0)",
     "transformers (>=5.5.0,<6.0.0)",
     "moondream (>=1.1.0,<2.0.0)",
+    "kokoro-onnx (>=0.5.0,<0.6.0)",
+    "sounddevice (>=0.5.5,<0.6.0)",
+    "webrtcvad (>=2.0.10,<3.0.0)",
+    "openai-whisper (>=20250625,<20250626)",
+    "faster-whisper (>=1.2.1,<2.0.0)",
 ]
 
 

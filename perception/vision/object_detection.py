@@ -51,7 +51,6 @@ def run_viewer(frame):
 
     return closest_box, r
 
-
 def trigger_interpretation(r, closest_box):
     if closest_box is None:
         return
