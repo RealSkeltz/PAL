@@ -1,7 +1,7 @@
-from Perception.audio.audio_loop import listen
-from Perception.video.listen import listen
-
+import threading
+import cv2
 import ollama
+from Perception.voice.speak import voice_output
 
 # Helper functions
 def load_system_prompt(path):
@@ -10,8 +10,6 @@ def load_system_prompt(path):
     return system_prompt
 
 def query_model(query, system_prompt=None, MODEL=None):
-    system_prompt = load_system_prompt()
-    
     stream = ollama.chat(
         model=MODEL,
         messages=[
@@ -25,14 +23,18 @@ def query_model(query, system_prompt=None, MODEL=None):
         yield chunk["message"]["content"]
 
 # Main interaction function
-def interact(query, system_prompt=None, MODEL=None):
+def run(query, system_prompt=None, model=None):
     buffer = ""
-    for token in query_model(query, system_prompt, MODEL):
+    for token in query_model(query, system_prompt, model):
         print(token, end="", flush=True)
         buffer += token
         if buffer.endswith((".", "!", "?", "\n")):
-            speak(buffer.strip())
+            sentence = buffer.strip()
+            voice_output(sentence)
+            yield sentence
             buffer = ""
+    
     if buffer.strip():
-        speak(buffer.strip())
+        voice_output(buffer.strip())
+        yield buffer.strip()
 

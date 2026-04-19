@@ -1,15 +1,9 @@
 from Shared.Classes.Pal import Pal
-from Shared.Prompts import scout_identity
+import ollama
+
+with open("/Users/jscheltema/Documents/Personal/PAL/Shared/Prompts/scout_identity.txt") as f:
+    scout_identity = f.read()
 
 class Scout(Pal):
     def __init__(self):
-        super().__init__(scout_identity)
-
-    def run(self):
-        return super().run()
-
-    def see(self):
-        return super().see()
-    
-    def listen(self):
-        return super().listen()
+        super().__init__(system_prompt=scout_identity, model="qwen3.5:9b")

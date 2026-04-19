@@ -2,7 +2,7 @@ import ollama
 import cv2
 import base64
 
-def interpret_image(image, context: str, MODEL):
+def understand_image(image, context: str, MODEL):
     response = ollama.chat(
         model=MODEL,
         messages=[

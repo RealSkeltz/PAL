@@ -3,12 +3,18 @@ import numpy as np
 import threading
 import queue
 from faster_whisper import WhisperModel
+from typing import Generator
+from Shared.Classes.Message import Message
+from Shared.Classes.InputObject import InputObject
+
 
 model = WhisperModel("tiny", device="cpu", compute_type="int8")
 
 audio_queue = queue.Queue()
 transcript = {}  # chunk_id -> text
 chunk_id = 0
+
+result_queue = queue.Queue()
 
 def callback(indata, frames, time, status):
     audio_queue.put(indata.copy())
@@ -46,17 +52,13 @@ def transcribe_audio():
                 chunk_id += 1
                 # Print live
                 print("\r" + " ".join(transcript.values()), end="", flush=True)
+                result_queue.put(text)
 
-def run():
-    # Run transcription in background thread
-    t = threading.Thread(target=transcribe_audio, daemon=True)
-    t.start()
-
-    print("Speak now... (Ctrl+C to stop)")
-    with sd.InputStream(samplerate=16000, channels=1, dtype='float32', 
+def run() -> Generator[InputObject, None, None]:
+    threading.Thread(target=transcribe_audio, daemon=True).start()
+    with sd.InputStream(samplerate=16000, channels=1, dtype='float32',
                         blocksize=1600, callback=callback):
-        try:
-            while True:
-                pass
-        except KeyboardInterrupt:
-            print("\nStopped.")
+        while True:
+            text = result_queue.get()
+            yield InputObject(type="audio", content=text)
+        

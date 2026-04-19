@@ -3,6 +3,6 @@ from typing import Any
 
 @dataclass
 class InputObject:
-    oid: int
     type: str
-    content: Any
+    content: any
+    oid: int = 0
