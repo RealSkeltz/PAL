@@ -2,11 +2,7 @@ import ollama
 import cv2
 import base64
 
-### QWEN APPROACH
-
-MODEL = "qwen3.5:0.8b"
-
-def interpret_image(image, context):
+def interpret_image(image, context: str, MODEL):
     response = ollama.chat(
         model=MODEL,
         messages=[

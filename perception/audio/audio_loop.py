@@ -1,6 +1,4 @@
 import sounddevice as sd
-
-#_______ In __________
 import numpy as np
 import threading
 import queue
@@ -49,7 +47,7 @@ def transcribe_audio():
                 # Print live
                 print("\r" + " ".join(transcript.values()), end="", flush=True)
 
-def listen():
+def run():
     # Run transcription in background thread
     t = threading.Thread(target=transcribe_audio, daemon=True)
     t.start()
@@ -62,12 +60,3 @@ def listen():
                 pass
         except KeyboardInterrupt:
             print("\nStopped.")
-
-#_______ Out __________
-from kokoro_onnx import Kokoro
-kokoro = Kokoro("/Users/jscheltema/Documents/Personal/PAL/agent/voice/kokoro-v0_19.onnx", "/Users/jscheltema/Documents/Personal/PAL/agent/voice/voices.bin")
-
-def speak(text, voice='af_bella'):
-    samples, sample_rate = kokoro.create(text, voice=voice, speed=1.5)
-    sd.play(samples, sample_rate)
-    sd.wait()

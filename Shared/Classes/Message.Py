@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from InputObject import InputObject
+from Shared.Classes.InputObject import InputObject
 
 @dataclass
 class Message:

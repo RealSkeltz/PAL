@@ -1,16 +1,15 @@
-from Interaction.in_out import listen, speak
+from Perception.audio.audio_loop import listen
+from Perception.video.listen import listen
 
-# Language Model
 import ollama
-MODEL = "qwen3.5:9b"
 
 # Helper functions
-def load_system_prompt():
-    with open("prompts/system_prompt.txt", "r") as f:
+def load_system_prompt(path):
+    with open(path, "r") as f:
         system_prompt = f.read() 
     return system_prompt
 
-def query_model(query, system_prompt=None):
+def query_model(query, system_prompt=None, MODEL=None):
     system_prompt = load_system_prompt()
     
     stream = ollama.chat(
@@ -26,9 +25,9 @@ def query_model(query, system_prompt=None):
         yield chunk["message"]["content"]
 
 # Main interaction function
-def interact(query):
+def interact(query, system_prompt=None, MODEL=None):
     buffer = ""
-    for token in query_model(query):
+    for token in query_model(query, system_prompt, MODEL):
         print(token, end="", flush=True)
         buffer += token
         if buffer.endswith((".", "!", "?", "\n")):
