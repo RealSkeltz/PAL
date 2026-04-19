@@ -1,16 +1,10 @@
-import platform
-import subprocess
+from Interaction.in_out import listen, speak
 
 # Language Model
 import ollama
 MODEL = "qwen3.5:9b"
 
-# Voice model
-from kokoro_onnx import Kokoro
-import sounddevice as sd
-kokoro = Kokoro("/Users/jscheltema/Documents/Personal/PAL/agent/voice/kokoro-v0_19.onnx", "/Users/jscheltema/Documents/Personal/PAL/agent/voice/voices.bin")
-
-
+# Helper functions
 def load_system_prompt():
     with open("prompts/system_prompt.txt", "r") as f:
         system_prompt = f.read() 
@@ -31,24 +25,15 @@ def query_model(query, system_prompt=None):
     for chunk in stream:
         yield chunk["message"]["content"]
 
-def speak_mac(text):
-    if platform.system() == "Darwin":
-        subprocess.run(["say", "-v", "Daniel", text])
-    else:
-        subprocess.run(["espeak", text])
-
-def speak(text, voice):
-    samples, sample_rate = kokoro.create(text, voice=voice, speed=1.2)
-    sd.play(samples, sample_rate)
-    sd.wait()
-
-def interact(query, voice):
+# Main interaction function
+def interact(query):
     buffer = ""
     for token in query_model(query):
         print(token, end="", flush=True)
         buffer += token
         if buffer.endswith((".", "!", "?", "\n")):
-            speak(buffer.strip(), voice)
+            speak(buffer.strip())
             buffer = ""
     if buffer.strip():
         speak(buffer.strip())
+
