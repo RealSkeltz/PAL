@@ -15,6 +15,7 @@ def listen_for_headset_button(callback):
 
     for line in process.stdout:
         if "AVRCP Play" in line or "AVRCP Pause" in line:
+            print('TRIGGER SET')
             callback()
 
 

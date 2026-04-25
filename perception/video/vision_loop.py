@@ -14,7 +14,7 @@ from Shared.Classes.InputObject import InputObject
 from controls.headset_controls import start_headset_listener
 
 MODEL = YOLO("/Users/jscheltema/Documents/Personal/PAL/Shared/Resources/vision_models/yolov8n.pt", verbose=False)
-TARGET_FPS = 20
+TARGET_FPS = 5
 DELAY = int(1000 / TARGET_FPS)
 
 
@@ -47,12 +47,13 @@ def _annotate_frame(r, closest_box):
     cv2.imshow("detections", img)
     return img
 
-def _process_frame(frame):
+def _process_frame(frame, VISUAL_MODE=False):
     results = MODEL(frame, conf=0.375, verbose=False)
     r = results[0]
     h, w = r.orig_img.shape[:2]
     closest_box = _find_closest_box(r, w // 2, h // 2)
-    _annotate_frame(r, closest_box)
+    if VISUAL_MODE:
+        _annotate_frame(r, closest_box)
     return closest_box, r
 
 def extract_crop(r, closest_box) -> tuple[np.ndarray, str, float]:
@@ -60,7 +61,9 @@ def extract_crop(r, closest_box) -> tuple[np.ndarray, str, float]:
     label = r.names[int(closest_box.cls)]
     conf = float(closest_box.conf)
     crop = cv2.resize(r.orig_img[y1:y2, x1:x2], (224, 224))
-    return crop, label, conf
+    return (crop, label, conf)
+
+
 
 def run(trigger: threading.Event) -> Generator[Message, None, None]:
     cap = cv2.VideoCapture(0)
@@ -71,5 +74,11 @@ def run(trigger: threading.Event) -> Generator[Message, None, None]:
         closest_box, r = _process_frame(frame)
         if trigger.is_set():
             trigger.clear()
-            yield Message(multimodal=True, messages=[InputObject(type="image", content=(r, closest_box))])
+            if closest_box is None:
+                print("[Vision] Trigger fired but no object detected")
+            else:
+                label = r.names[int(closest_box.cls)]
+                conf = float(closest_box.conf)
+                print(f"[Vision] Trigger fired, capturing: {label} ({conf:.2f})")
+                yield extract_crop(r, closest_box)
         cv2.waitKey(DELAY)
