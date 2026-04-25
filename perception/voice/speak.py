@@ -1,3 +1,4 @@
+import numpy as np
 import sounddevice as sd
 from kokoro_onnx import Kokoro
 
@@ -19,4 +20,9 @@ _output_stream.start()
 def voice_output(text, voice='af_bella'):
     samples, sample_rate = kokoro.create(text, voice=voice, speed=1.2)
     # samples is float32 mono; ensure shape is (N,) or (N, 1)
+    _output_stream.write(samples)
+
+# --- Acknowledgment tones ---
+
+def play_sound(samples):
     _output_stream.write(samples)

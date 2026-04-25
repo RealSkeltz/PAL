@@ -8,8 +8,10 @@ import numpy as np
 from ultralytics import YOLO
 
 from typing import Generator
+from Shared.Constants.sounds import capture_tone
 from Shared.Classes.Message import Message
-from Shared.Classes.InputObject import InputObject
+from Perception.voice.speak import play_sound
+
 
 from controls.headset_controls import start_headset_listener
 
@@ -73,12 +75,14 @@ def run(trigger: threading.Event) -> Generator[Message, None, None]:
             break
         closest_box, r = _process_frame(frame)
         if trigger.is_set():
-            trigger.clear()
             if closest_box is None:
                 print("[Vision] Trigger fired but no object detected")
+                trigger.clear()
             else:
                 label = r.names[int(closest_box.cls)]
                 conf = float(closest_box.conf)
                 print(f"[Vision] Trigger fired, capturing: {label} ({conf:.2f})")
+                play_sound(capture_tone())
                 yield extract_crop(r, closest_box)
+                trigger.clear()
         cv2.waitKey(DELAY)
