@@ -20,18 +20,18 @@ class Pal(ABC):
         # Input processing
         self.internal_message_queue: queue = queue.Queue()
         self.internal_image_queue: queue = queue.Queue()
-        self.internal_history: list[str] = []
+        self.conversation: list[dict] = []
 
         # Output processing
         self.stop_event = threading.Event()
         self.is_speaking = threading.Event()
+        self.last_spoke_at = 0.0
 
         self.spoken_words: deque = deque(maxlen=200)
 
         # Controls
         self.trigger = threading.Event()
         start_headset_listener(lambda: self.trigger.set())
-
 
         print("[Start up] Initialized")
 
@@ -40,15 +40,22 @@ class Pal(ABC):
 
         def feed_msg(gen):
             print("[Start up] feed_msg thread started")
+            GRACE_SECONDS = 2
             for msg in gen:
                 print(f"[Main loop] Message received: {msg.content if msg.content else 'empty'}")
 
                 separate_words = re.findall(r"\b[\w']+\b", msg.content.lower())
-                print(f"[Debug] separate words: {separate_words}")
-                print(f"[Debug] spoken sentence: {self.spoken_words}")
+                #print(f"[Debug] separate words: {separate_words}")
+                #print(f"[Debug] spoken sentence: {self.spoken_words}")
 
                 if self.is_speaking.is_set():
-                    print("[Main loop] Potential barge-in detected")
+                    #print("[Debug] currently speaking, ignoring input")
+                    #print("[Main loop] Potential barge-in detected")
+                    continue
+
+                if (time.time() - self.last_spoke_at) < GRACE_SECONDS:
+                    print("[Debug] within post-speech grace period, ignoring input")
+                    continue
 
                     spoken_set = set(self.spoken_words)
                     if set(separate_words) & spoken_set:
@@ -61,23 +68,31 @@ class Pal(ABC):
             print("[Start up] process_messages thread started")
             while True:
                 self.stop_event.clear()
-                # Grab message from the queue
                 message = self.internal_message_queue.get()
-                query = message.content
+                query = message.content 
+
+                # Append user turn to conversation
+                self.conversation.append({"role": "user", "content": query})
 
                 # Process the message
                 print(f"[Main loop] Processing query: {query[:50] if query else 'empty'}")
                 self.is_speaking.set()
-                for chunk in interact.run(query, self.system_prompt, self.model):
+                assistant_chunks = []
+                for chunk in interact.run(self.conversation, self.system_prompt, self.model):
                     if self.stop_event.is_set():
                         print("[Main loop] Interrupted by user")
                         break
-                    words = re.findall(r"\b[\w']+\b", chunk.lower())
-                    self.spoken_words.extend(words)
-                    print(f"Spoken sentence: {chunk}")
-                    self.internal_history.append(chunk)
+                    self.spoken_words.extend(re.findall(r"\b[\w']+\b", chunk.lower()))
+                    assistant_chunks.append(chunk)
+
+                full_response = "".join(assistant_chunks)
+                if full_response:
+                    self.conversation.append({"role": "assistant", "content": full_response})
+
                 self.is_speaking.clear()
-                print(f"[Main loop] Response complete, history length: {len(self.internal_history)}")
+                self.last_spoke_at = time.time()
+                print(f"[Main loop] Response complete, history length: {len(self.conversation)}")
+                self.trim_conversation_history()
 
         threading.Thread(target=feed_msg, args=(self._listen(),), daemon=True).start()
         threading.Thread(target=process_messages, daemon=True).start()
@@ -118,3 +133,11 @@ class Pal(ABC):
             print(f"[Main loop] Vision response: {response[:100] if response else 'empty'}")
 
         threading.Thread(target=_run, daemon=True).start()
+
+    # Helper
+
+    def trim_conversation_history(self):
+        MAX_TURNS = 20 
+        if len(self.conversation) > MAX_TURNS:
+            print("History trimmed")
+            self.conversation = self.conversation[-MAX_TURNS:]

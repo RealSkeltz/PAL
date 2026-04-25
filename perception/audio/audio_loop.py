@@ -22,41 +22,59 @@ def callback(indata, frames, time, status):
 def transcribe_audio():
     global chunk_id
     buffer = []
-    silence_count = 0
+    silence_chunks = 0
+    speech_chunks = 0
+    
+    # Tunables (chunks of 0.1s each at blocksize=1600, sr=16000)
+    SILENCE_TO_FLUSH = 8       # 0.8s of silence ends an utterance
+    MIN_SPEECH_CHUNKS = 3      # require ~0.3s of speech before considering flush
+    MAX_BUFFER_CHUNKS = 200    # 20s safety cap to prevent runaway buffer
+    RMS_THRESHOLD = 0.01
+    
+    in_speech = False
     
     while True:
         chunk = audio_queue.get()
-        buffer.append(chunk)
-        
-        # Check if silent
         rms = np.sqrt(np.mean(chunk**2))
-        if rms < 0.01:
-            silence_count += 1
-        else:
-            silence_count = 0
+        is_speech = rms >= RMS_THRESHOLD
         
-        # Transcribe every ~2 seconds of speech, or on silence
-        if len(buffer) > 15 or (silence_count > 15 and buffer):
+        if is_speech:
+            buffer.append(chunk)
+            speech_chunks += 1
+            silence_chunks = 0
+            in_speech = True
+        elif in_speech:
+            # In an utterance but currently silent — keep buffering trailing silence
+            buffer.append(chunk)
+            silence_chunks += 1
+        # else: pre-speech silence, drop it
+        
+        # Flush when we've had enough silence after speech, or buffer is huge
+        should_flush = (
+            in_speech and silence_chunks >= SILENCE_TO_FLUSH and speech_chunks >= MIN_SPEECH_CHUNKS
+        ) or len(buffer) >= MAX_BUFFER_CHUNKS
+        
+        if should_flush:
             audio = np.concatenate(buffer).squeeze().astype(np.float32)
             buffer = []
-            silence_count = 0
+            silence_chunks = 0
+            speech_chunks = 0
+            in_speech = False
             
             if len(audio) < 4000:
                 continue
-                
+            
             segments, info = model.transcribe(
                 audio,
                 vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=500, threshold=0.5),
-                language='en'
+                language='en',
+                condition_on_previous_text=False,
             )
             text = " ".join(s.text for s in segments).strip()
-            
             if text:
                 transcript[chunk_id] = text
                 chunk_id += 1
-                # Print live
-                #print("\r" + " ".join(transcript.values()), end="", flush=True)
                 result_queue.put(text)
 
 def run() -> Generator[InputObject, None, None]:
