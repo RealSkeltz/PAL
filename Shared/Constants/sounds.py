@@ -50,3 +50,11 @@ def processing_tone():
     duration = random.uniform(1.3, 1.7)
     decay = random.uniform(2.0, 3.0)
     return _make_chime(freqs, duration_s=duration, decay_power=decay)
+
+def tool_tone():
+    """Quick subtle tick for tool execution. Different feel from chimes."""
+    base = [880, 1320]  # higher fifth — feels mechanical, not musical
+    freqs = [f * random.uniform(0.99, 1.01) for f in base]
+    duration = random.uniform(0.12, 0.18)
+    decay = random.uniform(3.5, 4.5)  # faster decay = snappier
+    return _make_chime(freqs, duration_s=duration, decay_power=decay, volume=0.18)

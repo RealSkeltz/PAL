@@ -7,6 +7,7 @@ from typing import Generator
 from Shared.Classes.Message import Message
 from Shared.Classes.InputObject import InputObject
 
+from Shared.utils.timing import timed
 
 model = WhisperModel("tiny", device="cpu", compute_type="int8")
 
@@ -63,15 +64,16 @@ def transcribe_audio():
             
             if len(audio) < 4000:
                 continue
-            
-            segments, info = model.transcribe(
-                audio,
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=500, threshold=0.5),
-                language='en',
-                condition_on_previous_text=False,
-            )
-            text = " ".join(s.text for s in segments).strip()
+
+            with timed("STT"):
+                segments, info = model.transcribe(
+                    audio,
+                    vad_filter=True,
+                    vad_parameters=dict(min_silence_duration_ms=500, threshold=0.5),
+                    language='en',
+                    condition_on_previous_text=False,
+                )
+                text = " ".join(s.text for s in segments).strip()
             if text:
                 transcript[chunk_id] = text
                 chunk_id += 1

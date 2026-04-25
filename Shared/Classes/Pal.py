@@ -7,14 +7,14 @@ import threading
 import cv2
 import base64
 from pynput import keyboard
+from Shared.utils.timing import timed
 from Shared.Constants.visual_cues import VISUAL_CUES
 from Perception.voice.speak import play_sound
 from Shared.Constants.sounds import processing_tone
 from Perception.video import vision_loop, understand
 from Perception.audio import audio_loop
 from Interaction import interact
-from controls.headset_controls import start_headset_listener
-
+from Shared.Tools.scout_tools import ToolHandler
 
 class Pal(ABC):
     def __init__(self, system_prompt: str, model):
@@ -33,12 +33,14 @@ class Pal(ABC):
         self.last_spoke_at = 0.0
 
         self.spoken_words: deque = deque(maxlen=200)
+        self.last_image = None
 
         # Controls
         self.vision_trigger = threading.Event()
-        #start_headset_listener(lambda: self.vision_trigger.set())
-
         self.start_keyboard_listener(lambda: self.vision_trigger.set())
+
+        # Tools
+        self.tool_handler = ToolHandler(self)
 
 
         print("[Start up] Initialized")
@@ -76,9 +78,10 @@ class Pal(ABC):
             while True:
                 self.stop_event.clear()
                 message = self.internal_message_queue.get()
+                turn_start = time.time()
                 query = message.content
 
-                # Drain the image queue, keep only the latest crop
+                # Drain image queue, take latest
                 latest = None
                 try:
                     while True:
@@ -86,39 +89,48 @@ class Pal(ABC):
                 except queue.Empty:
                     pass
 
-                # If a vision trigger is still pending, wait briefly for camera to deliver
+                # Wait briefly for image if vision trigger is pending
                 if latest is None and self.vision_trigger.is_set():
                     try:
                         latest = self.internal_image_queue.get(timeout=1.0)
                     except queue.Empty:
                         print("[Main loop] Vision trigger pending but no image arrived")
 
-                # Build user turn, attaching image if present
+                # Build user turn
                 user_msg = {"role": "user", "content": query}
                 if latest is not None:
                     crop, label, conf = latest
-                    user_msg["images"] = [self.numpy_to_base64(crop)]
+                    self.last_image = crop
+                    with timed("STT"):
+                        encoded = self.numpy_to_base64(crop)
+                    user_msg["images"] = [encoded]
                     print(f"[Main loop] Image attached to message: {label} ({conf:.2f})")
                 else:
-                    play_sound(processing_tone())
                     print("[Main loop] No image queued, sending text-only")
+                    #play_sound(processing_tone())
                 self.conversation.append(user_msg)
 
-                # Process the message
                 print(f"[Main loop] Processing query: {query[:50] if query else 'empty'}")
                 self.is_speaking.set()
-                assistant_chunks = []
-                for chunk in interact.run(self.conversation, self.system_prompt, self.model):
+
+                # Run the agentic turn — interact.run handles tool calls and 
+                # appends to self.conversation itself
+                first_chunk = True
+                for chunk in interact.run(
+                    self.conversation,
+                    self.system_prompt,
+                    self.model,
+                    tool_handler=self.tool_handler,
+                ):
+                    if first_chunk:
+                        elapsed_ms = (time.time() - turn_start) * 1000
+                        print(f"[Timing] time_to_first_spoken_word: {elapsed_ms:.0f}ms")
+                        first_chunk = False
+
                     if self.stop_event.is_set():
                         print("[Main loop] Interrupted by user")
                         break
                     self.spoken_words.extend(re.findall(r"\b[\w']+\b", chunk.lower()))
-                    assistant_chunks.append(chunk)
-
-                full_response = "".join(assistant_chunks)
-                if full_response:
-                    self.conversation.append({"role": "assistant", "content": full_response})
-                    print(f"[Main loop] Assistant turn saved ({len(full_response)} chars)")
 
                 self.is_speaking.clear()
                 self.last_spoke_at = time.time()
@@ -150,17 +162,23 @@ class Pal(ABC):
         return audio_loop.run()
 
     # Helper
-
     def trim_conversation_history(self):
-        MAX_TURNS = 20 
-        if len(self.conversation) > MAX_TURNS:
-            dropped = len(self.conversation) - MAX_TURNS
-            self.conversation = self.conversation[-MAX_TURNS:]
-            print(f"[Main loop] History trimmed, dropped {dropped} turns")
+        MAX_ENTRIES = 40  # rough budget; tool turns add multiple entries
+        if len(self.conversation) > MAX_ENTRIES:
+            # Find a user message to start from to avoid orphaning tool chains
+            excess = len(self.conversation) - MAX_ENTRIES
+            for i in range(excess, len(self.conversation)):
+                if self.conversation[i].get("role") == "user":
+                    dropped = i
+                    self.conversation = self.conversation[i:]
+                    print(f"[Main loop] History trimmed, dropped {dropped} entries")
+                    break
         
+        # Strip images from older user turns (keep only on most recent)
+        user_indices = [i for i, m in enumerate(self.conversation) if m.get("role") == "user"]
         stripped = 0
-        for msg in self.conversation[:-1]:
-            if msg.pop("images", None) is not None:
+        for i in user_indices[:-1]:
+            if self.conversation[i].pop("images", None) is not None:
                 stripped += 1
         if stripped:
             print(f"[Main loop] Stripped images from {stripped} older turns")
