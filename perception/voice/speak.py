@@ -5,6 +5,6 @@ kokoro = Kokoro(
     "/Users/jscheltema/Documents/Personal/PAL/Shared/Resources/voice_models/voices.bin"
 )
 def voice_output(text, voice='af_bella'):
-    samples, sample_rate = kokoro.create(text, voice=voice, speed=1.2)
+    samples, sample_rate = kokoro.create(text, voice=voice, speed=0.5)
     sd.play(samples, sample_rate)
     sd.wait()

@@ -23,15 +23,17 @@ def query_model(query, system_prompt=None, MODEL=None):
         yield chunk["message"]["content"]
 
 # Main interaction function
-def run(query, system_prompt=None, model=None):
+def run(query, system_prompt=None, model=None, muted=False):
     buffer = ""
     for token in query_model(query, system_prompt, model):
-        print(token, end="", flush=True)
+        #(token, end="", flush=True)
         buffer += token
         if buffer.endswith((".", "!", "?", "\n")):
             sentence = buffer.strip()
-            voice_output(sentence)
+            print('[Debug] output chunk yielded')
             yield sentence
+            print('[Debug] voice output now')
+            voice_output(sentence)
             buffer = ""
     
     if buffer.strip():

@@ -44,14 +44,19 @@ def transcribe_audio():
             if len(audio) < 4000:
                 continue
                 
-            segments, _ = model.transcribe(audio, language="en")
+            segments, info = model.transcribe(
+                audio,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=500, threshold=0.5),
+                language='en'
+            )
             text = " ".join(s.text for s in segments).strip()
             
             if text:
                 transcript[chunk_id] = text
                 chunk_id += 1
                 # Print live
-                print("\r" + " ".join(transcript.values()), end="", flush=True)
+                #print("\r" + " ".join(transcript.values()), end="", flush=True)
                 result_queue.put(text)
 
 def run() -> Generator[InputObject, None, None]:
