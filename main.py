@@ -1,8 +1,25 @@
+import argparse
 import threading
-from Core.Scout import Scout
-from Shared.Classes.Pal import Pal
 
-scout = Scout()
-scout.run()
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--preview", action="store_true",
+                        help="Enable debug preview at http://localhost:4200")
+    parser.add_argument("--preview-port", type=int, default=4200)
+    parser.add_argument("--text", action="store_true",
+                        help="Read from stdin instead of mic (no STT)")
+    args = parser.parse_args()
 
-threading.Event().wait()  # keep main thread alive
+    # Imports after argparse so any module-level setup can react to flags.
+    from Core.Scout import Scout
+
+    if args.preview:
+        from Testing.preview.server import preview
+        preview.start(port=args.preview_port)
+
+    scout = Scout()
+    scout.run(text_mode=args.text)
+    threading.Event().wait()  # keep main thread alive
+
+if __name__ == "__main__":
+    main()

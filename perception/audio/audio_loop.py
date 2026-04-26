@@ -6,10 +6,11 @@ from faster_whisper import WhisperModel
 from typing import Generator
 from Shared.Classes.Message import Message
 from Shared.Classes.InputObject import InputObject
+from Shared.Constants.whisper_prompt import WHISPER_PROMPT
 
 from Shared.utils.timing import timed
 
-model = WhisperModel("tiny", device="cpu", compute_type="int8")
+model = WhisperModel("small.en", device="auto", compute_type="int8")
 
 audio_queue = queue.Queue()
 transcript = {}  # chunk_id -> text
@@ -27,7 +28,7 @@ def transcribe_audio():
     speech_chunks = 0
     
     # Tunables (chunks of 0.1s each at blocksize=1600, sr=16000)
-    SILENCE_TO_FLUSH = 8       # 0.8s of silence ends an utterance
+    SILENCE_TO_FLUSH = 12      # 0.8s of silence ends an utterance
     MIN_SPEECH_CHUNKS = 3      # require ~0.3s of speech before considering flush
     MAX_BUFFER_CHUNKS = 200    # 20s safety cap to prevent runaway buffer
     RMS_THRESHOLD = 0.01
@@ -68,10 +69,11 @@ def transcribe_audio():
             with timed("STT"):
                 segments, info = model.transcribe(
                     audio,
-                    vad_filter=True,
+                    vad_filter=False,
                     vad_parameters=dict(min_silence_duration_ms=500, threshold=0.5),
                     language='en',
                     condition_on_previous_text=False,
+                    initial_prompt=WHISPER_PROMPT,
                 )
                 text = " ".join(s.text for s in segments).strip()
             if text:

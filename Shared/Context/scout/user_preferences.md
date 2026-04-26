@@ -1,1 +1,1 @@
-The user is Job, a builder and engineer based in Amsterdam. He prefers brief, technical responses without filler. He's experienced — assume he knows fundamentals and skip introductory explanations unless he asks. He uses metric units. When uncertain about anything physical or visual, default to asking rather than guessing.
+The user is Job, a software engineer based in Amsterdam.

@@ -12,8 +12,9 @@ from Shared.Constants.sounds import capture_tone
 from Shared.Classes.Message import Message
 from Perception.voice.speak import play_sound
 
+from Testing.preview.server import preview
 
-from controls.headset_controls import start_headset_listener
+from Controls.headset_controls import start_headset_listener
 
 MODEL = YOLO("/Users/jscheltema/Documents/Personal/PAL/Shared/Resources/vision_models/yolov8n.pt", verbose=False)
 TARGET_FPS = 5
@@ -46,16 +47,15 @@ def _annotate_frame(r, closest_box):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
     cv2.drawMarker(img, (cx, cy), (0, 0, 255), cv2.MARKER_CROSS, 20, 2)
-    cv2.imshow("detections", img)
+    #cv2.imshow("detections", img)
     return img
 
-def _process_frame(frame, VISUAL_MODE=False):
+def _process_frame(frame, PREVIEW_MODE=False):
     results = MODEL(frame, conf=0.375, verbose=False)
     r = results[0]
     h, w = r.orig_img.shape[:2]
     closest_box = _find_closest_box(r, w // 2, h // 2)
-    if VISUAL_MODE:
-        _annotate_frame(r, closest_box)
+    preview.set_frame(_annotate_frame(r, closest_box))
     return closest_box, r
 
 def extract_crop(r, closest_box) -> tuple[np.ndarray, str, float]:
@@ -68,21 +68,37 @@ def extract_crop(r, closest_box) -> tuple[np.ndarray, str, float]:
 
 
 def run(trigger: threading.Event) -> Generator[Message, None, None]:
-    cap = cv2.VideoCapture(0)
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        closest_box, r = _process_frame(frame)
-        if trigger.is_set():
-            if closest_box is None:
-                print("[Vision] Trigger fired but no object detected")
-                trigger.clear()
-            else:
-                label = r.names[int(closest_box.cls)]
-                conf = float(closest_box.conf)
-                print(f"[Vision] Trigger fired, capturing: {label} ({conf:.2f})")
-                play_sound(capture_tone())
-                yield extract_crop(r, closest_box)
-                trigger.clear()
-        cv2.waitKey(DELAY)
+    with suppress_stderr():
+        cap = cv2.VideoCapture(0)
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            closest_box, r = _process_frame(frame)
+            if trigger.is_set():
+                if closest_box is None:
+                    print("[Vision] Trigger fired but no object detected")
+                    trigger.clear()
+                else:
+                    label = r.names[int(closest_box.cls)]
+                    conf = float(closest_box.conf)
+                    print(f"[Vision] Trigger fired, capturing: {label} ({conf:.2f})")
+                    play_sound(capture_tone())
+                    yield extract_crop(r, closest_box)
+                    trigger.clear()
+            cv2.waitKey(DELAY)
+
+
+# Warning wrapper
+import contextlib
+
+@contextlib.contextmanager
+def suppress_stderr():
+    with open(os.devnull, 'w') as devnull:
+        old_stderr = os.dup(2)
+        os.dup2(devnull.fileno(), 2)
+        try:
+            yield
+        finally:
+            os.dup2(old_stderr, 2)
+            os.close(old_stderr)

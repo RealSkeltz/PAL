@@ -7,14 +7,17 @@ import threading
 import cv2
 import base64
 from pynput import keyboard
+
 from Shared.utils.timing import timed
 from Shared.Constants.visual_cues import VISUAL_CUES
+from Shared.Classes.InputObject import InputObject
 from Perception.voice.speak import play_sound
 from Shared.Constants.sounds import processing_tone
 from Perception.video import vision_loop, understand
 from Perception.audio import audio_loop
 from Interaction import interact
 from Shared.Tools.scout_tools import ToolHandler
+from Testing.preview.server import preview
 
 class Pal(ABC):
     def __init__(self, system_prompt: str, model):
@@ -37,7 +40,7 @@ class Pal(ABC):
 
         # Controls
         self.vision_trigger = threading.Event()
-        self.start_keyboard_listener(lambda: self.vision_trigger.set())
+        #self.start_keyboard_listener(lambda: self.vision_trigger.set())
 
         # Tools
         self.tool_handler = ToolHandler(self)
@@ -45,7 +48,7 @@ class Pal(ABC):
 
         print("[Start up] Initialized")
 
-    def run(self):
+    def run(self, text_mode: bool = False):
         print("[Start up] Starting run loop")
 
         def feed_msg(gen):
@@ -71,6 +74,7 @@ class Pal(ABC):
 
                 #self.vision_trigger.set()
                 print("[Main loop] Message accepted, queueing for processing")
+                preview.add_event("user_speech", {"text": msg.content})
                 self.internal_message_queue.put(msg)
 
         def process_messages():
@@ -104,6 +108,7 @@ class Pal(ABC):
                     with timed("STT"):
                         encoded = self.numpy_to_base64(crop)
                     user_msg["images"] = [encoded]
+                    preview.add_event("image_attached", {"label": label, "conf": round(conf, 2)})
                     print(f"[Main loop] Image attached to message: {label} ({conf:.2f})")
                 else:
                     print("[Main loop] No image queued, sending text-only")
@@ -116,28 +121,25 @@ class Pal(ABC):
                 # Run the agentic turn — interact.run handles tool calls and 
                 # appends to self.conversation itself
                 first_chunk = True
-                for chunk in interact.run(
+                interact.run(
                     self.conversation,
                     self.system_prompt,
                     self.model,
                     tool_handler=self.tool_handler,
-                ):
-                    if first_chunk:
-                        elapsed_ms = (time.time() - turn_start) * 1000
-                        print(f"[Timing] time_to_first_spoken_word: {elapsed_ms:.0f}ms")
-                        first_chunk = False
-
-                    if self.stop_event.is_set():
-                        print("[Main loop] Interrupted by user")
-                        break
-                    self.spoken_words.extend(re.findall(r"\b[\w']+\b", chunk.lower()))
+                )
+                
+                if first_chunk:
+                    elapsed_ms = (time.time() - turn_start) * 1000
+                    print(f"[Timing] time_to_first_spoken_word: {elapsed_ms:.0f}ms")
+                    first_chunk = False
 
                 self.is_speaking.clear()
                 self.last_spoke_at = time.time()
                 print(f"[Main loop] Response complete, history length: {len(self.conversation)}")
                 self.trim_conversation_history()
 
-        threading.Thread(target=feed_msg, args=(self._listen(),), daemon=True).start()
+        input_source = self._text_input() if text_mode else self._listen()
+        threading.Thread(target=feed_msg, args=(input_source,), daemon=True).start()
         threading.Thread(target=process_messages, daemon=True).start()
 
         def feed_img(gen):
@@ -149,7 +151,6 @@ class Pal(ABC):
 
 
         threading.Thread(target=feed_img, args=(self._see(),), daemon=True).start()
-        #threading.Thread(target=process_images, daemon=True).start()
         print("[Start up] All threads started")
         
     # Senses
@@ -160,6 +161,25 @@ class Pal(ABC):
     def _listen(self):
         print("[Start up] _listen started")
         return audio_loop.run()
+    
+    # In Shared/Classes/Pal.py
+    def _text_input(self):
+        """Replaces _listen: read messages from stdin instead of mic."""
+        print("[Start up] _text_input started")
+        print("[Text mode] Type messages and press Enter. Ctrl+D to quit.")
+        while True:
+            try:
+                line = input("> ").strip()
+            except EOFError:
+                print("\n[Text mode] EOF, exiting")
+                break
+            except KeyboardInterrupt:
+                print("\n[Text mode] interrupted")
+                break
+            if not line:
+                continue
+            # Match the Message wrapper your audio_loop yields
+            yield InputObject(type="text", content=line)
 
     # Helper
     def trim_conversation_history(self):
