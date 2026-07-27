@@ -11,10 +11,10 @@ def main():
     args = parser.parse_args()
 
     # Imports after argparse so any module-level setup can react to flags.
-    from Core.Scout import Scout
+    from agents.scout import Scout
 
     if args.preview:
-        from Testing.preview.server import preview
+        from pal.debug.preview import preview
         preview.start(port=args.preview_port)
 
     scout = Scout()
