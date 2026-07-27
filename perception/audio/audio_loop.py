@@ -10,7 +10,7 @@ from Shared.Constants.whisper_prompt import WHISPER_PROMPT
 
 from Shared.utils.timing import timed
 
-model = WhisperModel("small.en", device="auto", compute_type="int8")
+model = WhisperModel("distil-small.en", device="auto", compute_type="float32", cpu_threads=4)
 
 audio_queue = queue.Queue()
 transcript = {}  # chunk_id -> text
@@ -28,7 +28,7 @@ def transcribe_audio():
     speech_chunks = 0
     
     # Tunables (chunks of 0.1s each at blocksize=1600, sr=16000)
-    SILENCE_TO_FLUSH = 12      # 0.8s of silence ends an utterance
+    SILENCE_TO_FLUSH = 7      # 0.8s of silence ends an utterance
     MIN_SPEECH_CHUNKS = 3      # require ~0.3s of speech before considering flush
     MAX_BUFFER_CHUNKS = 200    # 20s safety cap to prevent runaway buffer
     RMS_THRESHOLD = 0.01
@@ -65,7 +65,7 @@ def transcribe_audio():
             
             if len(audio) < 4000:
                 continue
-
+            
             with timed("STT"):
                 segments, info = model.transcribe(
                     audio,

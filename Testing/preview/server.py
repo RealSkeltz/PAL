@@ -5,7 +5,7 @@ Serves a localhost HTML page with:
   - Live camera frame (latest annotated, refreshed via <img> tag timer)
   - Event stream (SSE) for transcripts, tool calls, image attachments, etc.
 
-Disabled unless PREVIEW_MODE env var is set (or .start() is called explicitly).
+Disabled unless preview.start() is called.
 
 Usage from Scout code:
     from Testing.preview.server import preview
@@ -16,7 +16,6 @@ Usage from Scout code:
 All calls are no-ops when disabled, so hooks are cheap to leave in place.
 """
 
-import os
 import json
 import time
 import threading
@@ -30,20 +29,35 @@ HTML_PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Scout Preview</title>
+<title>Scout</title>
 <style>
+  :root {
+    --bg: #0e0f11;
+    --panel: #131518;
+    --border: rgba(255,255,255,0.06);
+    --text: #e6e7ea;
+    --text-dim: #8a8d93;
+    --text-faint: #565a61;
+    --accent: #7dd3c0;
+    --accent-dim: rgba(125, 211, 192, 0.4);
+  }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #1a1a1a;
-    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+    font-size: 14px;
+    background: var(--bg);
+    color: var(--text);
     height: 100vh;
     display: flex;
     overflow: hidden;
+    -webkit-font-smoothing: antialiased;
   }
+
+  /* ---- Camera panel ---- */
   #camera {
-    flex: 0 0 60%;
+    flex: 0 0 58%;
     background: #000;
     display: flex;
     align-items: center;
@@ -55,114 +69,256 @@ HTML_PAGE = """<!DOCTYPE html>
     max-height: 100%;
     object-fit: contain;
   }
-  #camera .label {
-    position: absolute;
-    top: 12px;
-    left: 12px;
-    background: rgba(0,0,0,0.6);
-    padding: 4px 10px;
+  #camera-empty {
+    color: var(--text-faint);
     font-size: 12px;
-    border-radius: 4px;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    font-weight: 500;
   }
+  .camera-label {
+    position: absolute;
+    top: 20px;
+    left: 24px;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    font-weight: 600;
+  }
+
+  /* ---- Events panel ---- */
   #events {
     flex: 1;
-    border-left: 1px solid #333;
+    border-left: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    background: #222;
+    background: var(--panel);
+    min-width: 0;
   }
   #events-header {
-    padding: 12px 16px;
-    border-bottom: 1px solid #333;
-    font-size: 13px;
-    letter-spacing: 0.5px;
-    color: #888;
+    padding: 18px 24px 16px;
+    border-bottom: 1px solid var(--border);
     display: flex;
     justify-content: space-between;
+    align-items: center;
+    gap: 12px;
   }
-  #status { font-size: 11px; }
-  .connected { color: #4caf50; }
-  .disconnected { color: #f44336; }
+  #events-header h1 {
+    margin: 0;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    font-weight: 600;
+  }
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  #status {
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  #status::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-faint);
+    transition: background 0.2s;
+  }
+  #status.connected { color: var(--text-dim); }
+  #status.connected::before {
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent-dim);
+  }
+  #reset {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    padding: 5px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  #reset:hover {
+    color: var(--text);
+    border-color: rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.02);
+  }
+  #reset:active { transform: translateY(1px); }
+
   #log {
     flex: 1;
     overflow-y: auto;
-    padding: 8px 0;
+    padding: 8px 0 24px;
   }
+  #log::-webkit-scrollbar { width: 8px; }
+  #log::-webkit-scrollbar-track { background: transparent; }
+  #log::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.06);
+    border-radius: 4px;
+  }
+  #log::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.12); }
+
   .event {
-    padding: 8px 16px;
-    border-bottom: 1px solid #2a2a2a;
-    font-size: 13px;
-    line-height: 1.5;
-    display: flex;
-    gap: 10px;
+    padding: 10px 24px;
+    display: grid;
+    grid-template-columns: 80px 1fr auto;
+    gap: 16px;
+    align-items: baseline;
+    animation: fadeIn 0.18s ease-out;
   }
-  .event .icon { flex: 0 0 22px; font-size: 16px; }
-  .event .body { flex: 1; min-width: 0; word-wrap: break-word; }
-  .event .ts {
-    flex: 0 0 60px;
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(2px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .event .label {
     font-size: 10px;
-    color: #666;
-    text-align: right;
-    margin-top: 3px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--text-faint);
+    white-space: nowrap;
   }
-  .event.user_speech .body { color: #82b1ff; }
-  .event.scout_speech .body { color: #ffe082; }
-  .event.tool_call .body { color: #b9f6ca; font-family: ui-monospace, monospace; font-size: 12px; }
-  .event.tool_result .body { color: #c5e1a5; font-family: ui-monospace, monospace; font-size: 12px; }
-  .event.image_attached .body { color: #ce93d8; font-style: italic; }
-  .event.system .body { color: #888; font-style: italic; }
-  pre { margin: 0; white-space: pre-wrap; }
+  .event .body {
+    color: var(--text);
+    line-height: 1.5;
+    word-wrap: break-word;
+    min-width: 0;
+  }
+  .event .ts {
+    font-size: 10px;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* per-type accents (label only — keep body neutral) */
+  .event.user_speech .label { color: var(--accent); }
+  .event.scout_speech .label { color: #c9a96e; }
+  .event.tool_call .label { color: #b794d4; }
+  .event.tool_result .label { color: #7fa67d; }
+  .event.image_attached .label { color: #d4a574; }
+  .event.system .label { color: var(--text-faint); }
+
+  .event.tool_call .body, .event.tool_result .body {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+  .event.system .body {
+    color: var(--text-dim);
+    font-style: italic;
+  }
+  .event.image_attached .body { color: var(--text-dim); }
+
+  pre { margin: 0; white-space: pre-wrap; font: inherit; }
+
+  .empty-state {
+    padding: 60px 24px;
+    text-align: center;
+    color: var(--text-faint);
+    font-size: 12px;
+    letter-spacing: 0.05em;
+  }
 </style>
 </head>
 <body>
   <div id="camera">
-    <img id="frame" src="/frame.jpg" alt="camera">
-    <div class="label">CAMERA</div>
+    <span class="camera-label">Camera</span>
+    <img id="frame" alt="" style="display:none">
+    <div id="camera-empty">No signal</div>
   </div>
   <div id="events">
     <div id="events-header">
-      <span>EVENTS</span>
-      <span id="status" class="disconnected">disconnected</span>
+      <h1>Activity</h1>
+      <div class="header-actions">
+        <span id="status">disconnected</span>
+        <button id="reset" title="Clear log and start fresh">Clear</button>
+      </div>
     </div>
-    <div id="log"></div>
+    <div id="log">
+      <div class="empty-state">Waiting for events…</div>
+    </div>
   </div>
 <script>
   const log = document.getElementById('log');
   const status = document.getElementById('status');
   const frame = document.getElementById('frame');
+  const cameraEmpty = document.getElementById('camera-empty');
+  const resetBtn = document.getElementById('reset');
 
-  // Refresh camera frame every 100ms
+  let frameLoaded = false;
   setInterval(() => {
-    frame.src = '/frame.jpg?t=' + Date.now();
+    const img = new Image();
+    img.onload = () => {
+      frame.src = img.src;
+      if (!frameLoaded) {
+        frame.style.display = 'block';
+        cameraEmpty.style.display = 'none';
+        frameLoaded = true;
+      }
+    };
+    img.onerror = () => {};
+    img.src = '/frame.jpg?t=' + Date.now();
   }, 100);
 
-  const ICONS = {
-    user_speech: '🎤',
-    scout_speech: '🔊',
-    tool_call: '🔧',
-    tool_result: '✅',
-    image_attached: '📷',
-    system: 'ℹ️',
+  const LABELS = {
+    user_speech: 'Heard',
+    scout_speech: 'Said',
+    tool_call: 'Tool',
+    tool_result: 'Result',
+    image_attached: 'Image',
+    system: 'System',
   };
 
+  function clearLog() {
+    log.innerHTML = '<div class="empty-state">Waiting for events…</div>';
+  }
+
   function addEvent(evt) {
+    const empty = log.querySelector('.empty-state');
+    if (empty) empty.remove();
+
+    if (evt.type === '_reset') { clearLog(); return; }
+
     const div = document.createElement('div');
     div.className = 'event ' + evt.type;
-    const icon = ICONS[evt.type] || '•';
+    const label = LABELS[evt.type] || evt.type;
     const ts = new Date(evt.ts * 1000).toLocaleTimeString('en-US', {hour12: false});
+
     let body;
     if (typeof evt.data === 'string') {
       body = evt.data;
     } else if (evt.data.text) {
       body = evt.data.text;
+    } else if (evt.type === 'tool_call') {
+      const args = evt.data.args ? JSON.stringify(evt.data.args) : '';
+      body = `${evt.data.name}(${args})`;
+    } else if (evt.type === 'tool_result') {
+      body = `${evt.data.name || ''} → ${evt.data.result || ''}`.trim();
+    } else if (evt.type === 'image_attached') {
+      const conf = evt.data.conf !== undefined ? ` (${(evt.data.conf * 100).toFixed(0)}%)` : '';
+      body = `${evt.data.label || 'frame'}${conf}`;
     } else {
       body = JSON.stringify(evt.data);
     }
-    div.innerHTML = `<div class="icon">${icon}</div><div class="body"><pre>${escapeHtml(body)}</pre></div><div class="ts">${ts}</div>`;
+
+    div.innerHTML = `<div class="label">${label}</div><div class="body"><pre>${escapeHtml(body)}</pre></div><div class="ts">${ts}</div>`;
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
-    // Cap DOM at 500 events
     while (log.children.length > 500) log.removeChild(log.firstChild);
   }
 
@@ -170,12 +326,21 @@ HTML_PAGE = """<!DOCTYPE html>
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
+  resetBtn.addEventListener('click', async () => {
+    try {
+      await fetch('/reset', { method: 'POST' });
+      clearLog();
+    } catch (err) {
+      console.error('reset failed', err);
+    }
+  });
+
   function connect() {
     const es = new EventSource('/events');
-    es.onopen = () => { status.textContent = 'connected'; status.className = 'connected'; };
+    es.onopen = () => { status.textContent = 'live'; status.className = 'connected'; };
     es.onerror = () => {
       status.textContent = 'disconnected';
-      status.className = 'disconnected';
+      status.className = '';
       es.close();
       setTimeout(connect, 1000);
     };
@@ -195,17 +360,16 @@ class PreviewServer:
 
     def __init__(self):
         self._enabled = False
-        self._port = 4200
+        self._port = 8765
         self._frame_jpeg = None
         self._frame_lock = threading.Lock()
         self._clients = []
         self._clients_lock = threading.Lock()
-        self._history = deque(maxlen=50)  # replayed to new clients
+        self._history = deque(maxlen=200)
         self._httpd = None
         self._thread = None
 
-    def start(self, port: int = 4200):
-        """Start the server. Idempotent."""
+    def start(self, port: int = 8765):
         if self._enabled:
             return
         self._port = port
@@ -245,6 +409,20 @@ class PreviewServer:
         evt = {"type": event_type, "data": data, "ts": time.time()}
         line = f"data: {json.dumps(evt)}\n\n".encode()
         self._history.append(line)
+        self._broadcast(line)
+
+    def reset(self):
+        """Clear server history and tell connected clients to clear their UI."""
+        if not self._enabled:
+            return
+        self._history.clear()
+        evt = {"type": "_reset", "data": {}, "ts": time.time()}
+        line = f"data: {json.dumps(evt)}\n\n".encode()
+        self._broadcast(line)
+
+    # ----- internals -----
+
+    def _broadcast(self, line: bytes):
         with self._clients_lock:
             dead = []
             for client in self._clients:
@@ -259,12 +437,9 @@ class PreviewServer:
                 except ValueError:
                     pass
 
-    # ----- internals -----
-
     def _register_client(self, handler):
         with self._clients_lock:
             self._clients.append(handler)
-        # Replay recent history so the page isn't empty on connect
         for line in list(self._history):
             try:
                 handler.wfile.write(line)
@@ -286,7 +461,7 @@ class PreviewServer:
     def _make_handler(server_self):
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, fmt, *args):
-                pass  # silence default per-request stderr logging
+                pass
 
             def do_GET(self):
                 path = self.path.split("?", 1)[0]
@@ -296,6 +471,15 @@ class PreviewServer:
                     self._serve_frame()
                 elif path == "/events":
                     self._serve_events()
+                else:
+                    self.send_error(404)
+
+            def do_POST(self):
+                path = self.path.split("?", 1)[0]
+                if path == "/reset":
+                    server_self.reset()
+                    self.send_response(204)
+                    self.end_headers()
                 else:
                     self.send_error(404)
 
@@ -310,7 +494,6 @@ class PreviewServer:
             def _serve_frame(self):
                 buf = server_self._get_frame()
                 if buf is None:
-                    # Tiny placeholder JPEG (1x1 black)
                     self.send_response(204)
                     self.end_headers()
                     return
@@ -328,7 +511,6 @@ class PreviewServer:
                 self.send_header("Connection", "keep-alive")
                 self.send_header("X-Accel-Buffering", "no")
                 self.end_headers()
-                # Initial comment to flush headers in some clients
                 try:
                     self.wfile.write(b": connected\n\n")
                     self.wfile.flush()
@@ -336,8 +518,6 @@ class PreviewServer:
                     return
                 server_self._register_client(self)
                 try:
-                    # Block this handler thread until the client disconnects.
-                    # We detect disconnect via heartbeat writes.
                     while server_self._enabled:
                         time.sleep(15)
                         try:
@@ -351,8 +531,5 @@ class PreviewServer:
         return Handler
 
 
-# Module-level singleton. Auto-starts if PREVIEW_MODE=1.
+# Module-level singleton.
 preview = PreviewServer()
-if os.environ.get("PREVIEW_MODE") == "1":
-    port = int(os.environ.get("PREVIEW_MODE_PORT", "4200"))
-    preview.start(port=port)
