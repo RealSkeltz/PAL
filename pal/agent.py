@@ -47,6 +47,7 @@ class Pal(ABC):
 
         # Controls
         self.vision_trigger = threading.Event()
+        self.detect = True   # YOLO on by default; run(detect=False) turns it off
         #self.start_keyboard_listener(lambda: self.vision_trigger.set())
 
         # Tools
@@ -55,8 +56,10 @@ class Pal(ABC):
 
         print("[Start up] Initialized")
 
-    def run(self, text_mode: bool = False):
+    def run(self, text_mode: bool = False, detect: bool = True):
+        """Start the agent. `detect` toggles YOLO object detection on the camera."""
         print("[Start up] Starting run loop")
+        self.detect = detect
 
         def feed_msg(gen):
             print("[Start up] feed_msg thread started")
@@ -164,7 +167,7 @@ class Pal(ABC):
     # Senses
     def _see(self):
         print("[Start up] _see started")
-        return vision_loop.run(self.vision_trigger)
+        return vision_loop.run(self.vision_trigger, detect=self.detect)
     
     def _listen(self):
         print("[Start up] _listen started")

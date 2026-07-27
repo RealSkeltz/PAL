@@ -8,6 +8,8 @@ def main():
     parser.add_argument("--preview-port", type=int, default=4200)
     parser.add_argument("--text", action="store_true",
                         help="Read from stdin instead of mic (no STT)")
+    parser.add_argument("--no-yolo", action="store_true",
+                        help="Skip object detection; send the whole frame to the vision model")
     args = parser.parse_args()
 
     # Imports after argparse so any module-level setup can react to flags.
@@ -18,7 +20,7 @@ def main():
         preview.start(port=args.preview_port)
 
     scout = Scout()
-    scout.run(text_mode=args.text)
+    scout.run(text_mode=args.text, detect=not args.no_yolo)
     threading.Event().wait()  # keep main thread alive
 
 if __name__ == "__main__":
