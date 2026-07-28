@@ -11,6 +11,7 @@ import base64
 from pynput import keyboard
 
 from pal.utils.timing import timed
+from pal.status import State, status
 from pal.constants.visual_cues import VISUAL_CUES
 from pal.llm import Turn, get_client
 from pal.types import InputObject
@@ -126,6 +127,7 @@ class Pal(ABC):
 
                 print(f"[Main loop] Processing query: {query[:50] if query else 'empty'}")
                 self.is_speaking.set()
+                status.set_state(State.THINKING)
 
                 # Run the agentic turn — interact.run handles tool calls and
                 # appends to self.conversation itself. A failed turn must not
@@ -139,6 +141,7 @@ class Pal(ABC):
                         tool_handler=self.tool_handler,
                     )
                     elapsed_ms = (time.time() - turn_start) * 1000
+                    status.record("reply", elapsed_ms)
                     print(f"[Timing] time_to_first_spoken_word: {elapsed_ms:.0f}ms")
                 except Exception:
                     print("[Main loop] Turn failed:")
@@ -146,6 +149,7 @@ class Pal(ABC):
                 finally:
                     self.is_speaking.clear()
                     self.last_spoke_at = time.time()
+                    status.set_state(State.IDLE)
                 print(f"[Main loop] Response complete, history length: {len(self.conversation)}")
                 self.trim_conversation_history()
 

@@ -9,6 +9,7 @@ from pal.types import InputObject
 from pal.constants.whisper_prompt import WHISPER_PROMPT
 
 from pal.utils.timing import timed
+from pal.status import State, status
 
 model = WhisperModel("distil-small.en", device="auto", compute_type="float32", cpu_threads=4)
 
@@ -18,7 +19,9 @@ chunk_id = 0
 
 result_queue = queue.Queue()
 
-def callback(indata, frames, time, status):
+def callback(indata, frames, time_info, stream_status):
+    # Renamed off sounddevice's defaults: `status` would shadow the status
+    # singleton and `time` the stdlib module, both imported at module level.
     audio_queue.put(indata.copy())
 
 def transcribe_audio():
@@ -41,6 +44,8 @@ def transcribe_audio():
         is_speech = rms >= RMS_THRESHOLD
         
         if is_speech:
+            if not in_speech:
+                status.set_state(State.LISTENING)
             buffer.append(chunk)
             speech_chunks += 1
             silence_chunks = 0
@@ -64,8 +69,9 @@ def transcribe_audio():
             in_speech = False
             
             if len(audio) < 4000:
+                status.set_state(State.IDLE)
                 continue
-            
+
             with timed("STT"):
                 segments, info = model.transcribe(
                     audio,
@@ -76,6 +82,9 @@ def transcribe_audio():
                     initial_prompt=WHISPER_PROMPT,
                 )
                 text = " ".join(s.text for s in segments).strip()
+            # Drop back to idle before handing the text over, so the agent
+            # thread's move to THINKING is never overwritten by this one.
+            status.set_state(State.IDLE)
             if text:
                 transcript[chunk_id] = text
                 chunk_id += 1

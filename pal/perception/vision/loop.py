@@ -14,6 +14,7 @@ from pal.types import Message
 from pal.voice.speak import play_sound
 
 from pal.debug.preview import preview
+from pal.status import status
 from pal.perception.vision.hud import annotate
 from pal.perception.vision.tracking import DETECT_FLOOR, Tracker
 
@@ -49,14 +50,13 @@ def _model():
     return _MODEL
 
 
-def _process_frame(frame):
+def _detect(frame):
+    """Run the detector and fold this frame's boxes into the running tracks."""
     # Detect right down at DETECT_FLOOR and let the tracker decide what earns a
     # box — filtering higher here would starve ByteTrack's low-score recovery.
     result = _model().track(frame, conf=DETECT_FLOOR, persist=True,
                             tracker="bytetrack.yaml", verbose=False)[0]
-    tracks = _tracker.update(result)
-    preview.set_frame(annotate(frame, tracks))
-    return result
+    return _tracker.update(result)
 
 
 def extract_crop(r, closest_box) -> tuple[np.ndarray, str, float]:
@@ -97,11 +97,10 @@ def run(trigger: threading.Event, detect: bool = True) -> Generator[Message, Non
         if not ret:
             break
 
-        if detect:
-            _process_frame(frame)
-        else:
-            # No detector, so nothing annotates the preview — push the raw frame.
-            preview.set_frame(frame)
+        # The chrome is drawn either way — the status panel is just as useful
+        # with the detector off.
+        tracks = _detect(frame) if detect else []
+        preview.set_frame(annotate(frame, tracks, status.snapshot()))
 
         if trigger.is_set():
             capture = None

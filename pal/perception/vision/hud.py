@@ -13,6 +13,8 @@ from collections import namedtuple
 
 import cv2
 
+from pal.perception.vision import panel
+
 HUD_COLOR = (192, 211, 125)     # the preview's accent teal #7dd3c0, in BGR
 SHADOW_COLOR = (20, 20, 20)
 CROSSHAIR_COLOR = (150, 150, 150)
@@ -37,8 +39,8 @@ SCALE_RANGE = (0.7, 1.3)
 Style = namedtuple("Style", "font_scale font_weight line_weight")
 
 
-def annotate(frame, tracks):
-    """Return a copy of `frame` with a reticle drawn for each visible track."""
+def annotate(frame, tracks, snapshot=None):
+    """Return a copy of `frame` with a reticle per visible track, plus chrome."""
     img = frame.copy()
     h, w = img.shape[:2]
     style = _style_for(h)
@@ -52,6 +54,9 @@ def annotate(frame, tracks):
             _blend_region(img, overlay, bounds, track.opacity * HUD_ALPHA)
 
     cv2.drawMarker(img, (w // 2, h // 2), CROSSHAIR_COLOR, cv2.MARKER_CROSS, 14, 1, cv2.LINE_AA)
+
+    if snapshot is not None:
+        panel.draw(img, snapshot, style)
     return img
 
 

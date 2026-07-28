@@ -3,6 +3,7 @@ import re
 from pal.llm.base import Completed, TextDelta, Turn
 from pal.voice.speak import voice_output, play_sound
 from pal.utils.timing import timed
+from pal.status import State, status
 from pal.voice.sounds import tool_tone
 from pal.debug.preview import preview
 
@@ -15,7 +16,13 @@ def _split_sentences(text: str) -> list[str]:
 
 def _speak(text: str):
     print(text)
-    voice_output(text)
+    status.set_state(State.SPEAKING)
+    try:
+        voice_output(text)
+    finally:
+        # Back to thinking, not idle — the turn may still have more to say or a
+        # tool to run, and the agent clears the state when it finishes.
+        status.set_state(State.THINKING)
     preview.add_event("scout_speech", {"text": text})
 
 
@@ -66,6 +73,7 @@ def run(conversation, system_prompt=None, client=None, tool_handler=None, max_it
         for call in result.tool_calls:
             print(f"[Tools] Calling {call.name}({call.arguments})")
 
+            status.tool_fired(call.name)
             with timed(f"tool_{call.name}"):
                 if tool_handler is None:
                     output = "Error: no tool handler configured"
