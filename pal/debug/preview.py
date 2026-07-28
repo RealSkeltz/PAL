@@ -392,6 +392,15 @@ class PreviewServer:
 
     # ----- public push API -----
 
+    @property
+    def active(self) -> bool:
+        """Whether frames are actually being consumed.
+
+        Annotating a frame is not free, so callers can check this and skip the
+        work rather than rendering a HUD straight into the bin.
+        """
+        return self._enabled
+
     def set_frame(self, frame_np):
         if not self._enabled or frame_np is None:
             return

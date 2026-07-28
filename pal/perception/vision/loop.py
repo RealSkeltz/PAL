@@ -15,7 +15,7 @@ from pal.voice.speak import play_sound
 
 from pal.debug.preview import preview
 from pal.status import status
-from pal.perception.vision.hud import annotate
+from pal.hud import annotate
 from pal.perception.vision.tracking import DETECT_FLOOR, Tracker
 
 TARGET_FPS = 30
@@ -97,10 +97,13 @@ def run(trigger: threading.Event, detect: bool = True) -> Generator[Message, Non
         if not ret:
             break
 
-        # The chrome is drawn either way — the status panel is just as useful
-        # with the detector off.
         tracks = _detect(frame) if detect else []
-        preview.set_frame(annotate(frame, tracks, status.snapshot()))
+
+        # Annotation costs a few ms a frame, so only pay it when something is
+        # watching. The chrome is drawn whether or not the detector is on — the
+        # status panel is just as useful with no boxes.
+        if preview.active:
+            preview.set_frame(annotate(frame, tracks, status.snapshot()))
 
         if trigger.is_set():
             capture = None
