@@ -16,7 +16,7 @@ from pal.llm import Turn, get_client
 from pal.types import InputObject
 from pal.voice.speak import play_sound
 from pal.voice.sounds import processing_tone
-from pal.perception import vision_loop, understand
+from pal.perception import vision, understand
 from pal.perception import audio_loop
 from pal import interact
 from pal.tools.builtin import BuiltinTools
@@ -167,7 +167,7 @@ class Pal(ABC):
     # Senses
     def _see(self):
         print("[Start up] _see started")
-        return vision_loop.run(self.vision_trigger, detect=self.detect)
+        return vision.run(self.vision_trigger, detect=self.detect)
     
     def _listen(self):
         print("[Start up] _listen started")
