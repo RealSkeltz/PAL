@@ -5,7 +5,14 @@ hardcode an absolute path.
 """
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 ROOT = Path(__file__).resolve().parent.parent
+
+# Credentials and model selection live in .env (gitignored). Loaded here because
+# config is imported early — before any LLM client reads the environment.
+# Real environment variables take precedence over the file.
+load_dotenv(ROOT / ".env")
 
 MODELS_DIR = ROOT / "models"
 VISION_MODELS = MODELS_DIR / "vision"

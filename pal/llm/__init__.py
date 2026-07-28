@@ -17,22 +17,35 @@ __all__ = [
 ]
 
 
-PROVIDERS = ("ollama", "anthropic")
+PROVIDERS = ("ollama", "anthropic", "foundry")
 
 
 def get_client(spec: str, **kwargs) -> LLMClient:
-    provider, sep, model = spec.partition(":")
-    # ollama tags contain colons ("qwen3.5:9b"), so only split off a prefix that
-    # is actually a provider name; anything else is a bare ollama model.
-    if not sep or provider not in PROVIDERS:
+    """Build a client from a `provider:model` spec.
+
+    A bare provider name ("foundry") uses that backend's default model; anything
+    else without a recognised prefix is treated as an ollama model, since ollama
+    tags contain colons of their own ("qwen3.5:9b").
+    """
+    head, sep, tail = spec.partition(":")
+
+    if spec in PROVIDERS:
+        provider, model = spec, None          # provider default model
+    elif sep and head in PROVIDERS:
+        provider, model = head, tail
+    else:
         provider, model = "ollama", spec
+
+    if model is not None:
+        kwargs["model"] = model
 
     if provider == "ollama":
         from pal.llm.ollama_client import OllamaClient
-        return OllamaClient(model, **kwargs)
+        return OllamaClient(**kwargs)
 
     if provider == "anthropic":
         from pal.llm.anthropic_client import AnthropicClient
-        return AnthropicClient(model, **kwargs)
+        return AnthropicClient(**kwargs)
 
-    raise ValueError(f"Unknown LLM provider '{provider}' in '{spec}'")
+    from pal.llm.anthropic_client import FoundryClient
+    return FoundryClient(**kwargs)

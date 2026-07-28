@@ -1,45 +1,50 @@
-"""Claude via the Anthropic API.
+"""Claude, either on the first-party API or through Microsoft Foundry.
 
 `anthropic` is imported lazily so the ollama path never depends on it.
 """
 from pal.llm.base import Completed, LLMClient, TextDelta, ToolCall, ToolSpec, Turn
 
 DEFAULT_MODEL = "claude-opus-5"
+FOUNDRY_DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # Spoken replies are short by construction — a few sentences at most. A tight
 # budget keeps a rambling turn from stalling the voice loop.
 DEFAULT_MAX_TOKENS = 2048
 
-# Thinking is on by default on Opus 5 and disabling it is a known trap (tool
-# calls can arrive as plain text and silently never run). Low effort is the
-# supported way to keep a latency-sensitive loop cheap and fast.
+# Effort is the supported lever for a latency-sensitive loop. On Opus 5 thinking
+# is on by default and disabling it is a known trap (tool calls can arrive as
+# plain text and silently never run), so we leave `thinking` unset and lean on
+# low effort instead. Note the default differs by model: omitting `thinking`
+# means adaptive on Opus 5 but *no* thinking on Sonnet 4.6 — both acceptable
+# here, since the fastest turnaround is what a voice loop wants.
 DEFAULT_EFFORT = "low"
 
 # Opt-in server-side retry: if a request is declined on policy grounds, the API
 # re-runs it on a substitute model in the same call rather than returning empty.
+# First-party API only — not available on Foundry, Bedrock, or Vertex.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
 class AnthropicClient(LLMClient):
+    """Claude on the first-party API."""
+
+    supports_fallbacks = True
+
     def __init__(
         self,
         model: str = DEFAULT_MODEL,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         effort: str = DEFAULT_EFFORT,
     ):
-        try:
-            import anthropic
-        except ImportError as e:
-            raise ImportError(
-                "The Anthropic backend needs the anthropic SDK: poetry add anthropic"
-            ) from e
-
         self.model = model
         self.max_tokens = max_tokens
         self.effort = effort
+        self._client = self._connect()
+
+    def _connect(self):
         # Credentials resolve from ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or an
         # `ant auth login` profile — nothing to pass here.
-        self._client = anthropic.Anthropic()
+        return _sdk().Anthropic()
 
     def stream(self, system, conversation, tools=None):
         request = {
@@ -47,9 +52,10 @@ class AnthropicClient(LLMClient):
             "max_tokens": self.max_tokens,
             "messages": _encode_conversation(conversation),
             "output_config": {"effort": self.effort},
-            "betas": [FALLBACK_BETA],
-            "fallbacks": "default",
         }
+        if self.supports_fallbacks:
+            request["betas"] = [FALLBACK_BETA]
+            request["fallbacks"] = "default"
         if system:
             request["system"] = system
         if tools:
@@ -72,6 +78,44 @@ class AnthropicClient(LLMClient):
             if b.type == "tool_use"
         ]
         yield Completed(text=text, tool_calls=calls)
+
+
+class FoundryClient(AnthropicClient):
+    """Claude hosted on Microsoft Foundry.
+
+    Same wire format as the first-party API, but a different client class,
+    different credentials, and no server-side refusal fallbacks.
+    """
+
+    # `fallbacks` is Claude-API-only; sending it here is rejected.
+    supports_fallbacks = False
+
+    def __init__(self, model: str = FOUNDRY_DEFAULT_MODEL, **kwargs):
+        super().__init__(model, **kwargs)
+
+    def _connect(self):
+        # Reads ANTHROPIC_FOUNDRY_API_KEY / _RESOURCE / _BASE_URL from the
+        # environment — the first-party ANTHROPIC_API_KEY is not consulted,
+        # which is the easy mistake to make here.
+        try:
+            return _sdk().AnthropicFoundry()
+        except Exception as e:
+            raise RuntimeError(
+                "Foundry needs ANTHROPIC_FOUNDRY_API_KEY plus one of "
+                "ANTHROPIC_FOUNDRY_RESOURCE or ANTHROPIC_FOUNDRY_BASE_URL. "
+                "ANTHROPIC_API_KEY is a different credential and is not used here. "
+                f"({e})"
+            ) from e
+
+
+def _sdk():
+    try:
+        import anthropic
+    except ImportError as e:
+        raise ImportError(
+            "The Anthropic backend needs the anthropic SDK: poetry add anthropic"
+        ) from e
+    return anthropic
 
 
 def _encode_conversation(turns: list[Turn]) -> list[dict]:
