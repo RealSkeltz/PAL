@@ -16,7 +16,7 @@ from pal.debug.preview import preview
 
 from pal.controls.headset import start_headset_listener
 
-TARGET_FPS = 5
+TARGET_FPS = 30
 DELAY = int(1000 / TARGET_FPS)
 
 # Detector crops are square thumbnails; a whole frame is much larger, so cap its

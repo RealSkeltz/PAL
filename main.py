@@ -13,11 +13,14 @@ def main():
     args = parser.parse_args()
 
     # Imports after argparse so any module-level setup can react to flags.
-    from agents.scout import Scout
+    from startup import filtered_stderr
 
-    if args.preview:
-        from pal.debug.preview import preview
-        preview.start(port=args.preview_port)
+    with filtered_stderr():  # cv2/av duplicate-dylib warnings land here
+        from agents.scout import Scout
+
+        if args.preview:
+            from pal.debug.preview import preview
+            preview.start(port=args.preview_port)
 
     scout = Scout()
     scout.run(text_mode=args.text, detect=not args.no_yolo)
