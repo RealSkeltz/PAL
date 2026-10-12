@@ -1,6 +1,6 @@
 import re
 
-from pal.llm.base import Completed, TextDelta, Turn
+from pal.clients.base import Completed, TextDelta, Turn
 from pal.voice.speak import voice_output, play_sound
 from pal.utils.timing import timed
 from pal.voice.sounds import tool_tone
@@ -14,7 +14,7 @@ def _split_sentences(text: str) -> list[str]:
 
 
 def _speak(text: str):
-    print(text)
+    print(f"[PAL]      {text}")
     voice_output(text)
     preview.add_event("scout_speech", {"text": text})
 
@@ -46,7 +46,7 @@ def run(conversation, system_prompt=None, client=None, tool_handler=None, max_it
                 speech_buffer = ""
 
         if result.refused:
-            print("[Interact] Model declined the request")
+            print("[PAL]      declined the request")
             conversation.append(Turn(role="assistant", text=""))
             return
 
@@ -64,7 +64,7 @@ def run(conversation, system_prompt=None, client=None, tool_handler=None, max_it
 
         play_sound(tool_tone())
         for call in result.tool_calls:
-            print(f"[Tools] Calling {call.name}({call.arguments})")
+            print(f"[Tool]     {call.name}({call.arguments})")
 
             with timed(f"tool_{call.name}"):
                 if tool_handler is None:
@@ -74,7 +74,7 @@ def run(conversation, system_prompt=None, client=None, tool_handler=None, max_it
                     output = tool_handler.dispatch(call.name, call.arguments)
                     preview.add_event("tool_result", {"name": call.name, "result": output[:300]})
 
-            print(f"[Tools] Result: {output[:100]}{'...' if len(output) > 100 else ''}")
+            print(f"[Tool]     -> {output[:100]}{'...' if len(output) > 100 else ''}")
             conversation.append(Turn(role="tool", text=output, tool_call_id=call.id))
 
-    print(f"[Interact] Hit max_iterations ({max_iterations})")
+    print(f"[Error]    hit max_iterations ({max_iterations})")

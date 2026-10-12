@@ -3,7 +3,7 @@
 Specs are provider-neutral (`pal.llm.ToolSpec`) — each LLM backend translates
 them into its own schema dialect.
 """
-from pal.llm.base import ToolSpec
+from pal.clients.base import ToolSpec
 
 
 def tool(description: str, params: dict | None = None, required: list[str] | None = None):

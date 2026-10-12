@@ -9,4 +9,4 @@ def timed(label: str):
         yield
     finally:
         elapsed_ms = (time.time() - t0) * 1000
-        print(f"[Timing] {label}: {elapsed_ms:.0f}ms")
+        print(f"[Timing]   {label}: {elapsed_ms:.0f}ms")
