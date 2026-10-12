@@ -3,7 +3,7 @@
 Models are named `provider:model`, e.g. `ollama:qwen3.5:9b` or
 `anthropic:claude-opus-5`. A bare name with no provider is treated as ollama.
 """
-from pal.llm.base import (
+from pal.clients.base import (
     Completed,
     LLMClient,
     TextDelta,
@@ -40,12 +40,12 @@ def get_client(spec: str, **kwargs) -> LLMClient:
         kwargs["model"] = model
 
     if provider == "ollama":
-        from pal.llm.ollama_client import OllamaClient
+        from pal.clients.ollama_client import OllamaClient
         return OllamaClient(**kwargs)
 
     if provider == "anthropic":
-        from pal.llm.anthropic_client import AnthropicClient
+        from pal.clients.anthropic_client import AnthropicClient
         return AnthropicClient(**kwargs)
 
-    from pal.llm.anthropic_client import FoundryClient
+    from pal.clients.anthropic_client import FoundryClient
     return FoundryClient(**kwargs)

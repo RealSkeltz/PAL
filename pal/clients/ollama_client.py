@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import ollama
 
-from pal.llm.base import Completed, LLMClient, TextDelta, ToolCall, ToolSpec, Turn
+from pal.clients.base import Completed, LLMClient, TextDelta, ToolCall, ToolSpec, Turn
 
 
 class OllamaClient(LLMClient):

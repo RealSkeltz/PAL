@@ -1,6 +1,6 @@
 import re
 
-from pal.llm.base import Completed, TextDelta, Turn
+from pal.clients.base import Completed, TextDelta, Turn
 from pal.voice.speak import voice_output, play_sound
 from pal.utils.timing import timed
 from pal.status import State, status

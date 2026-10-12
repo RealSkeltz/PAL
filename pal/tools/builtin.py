@@ -41,16 +41,22 @@ class BuiltinTools(ToolHandler):
         return "\n".join(f"{i}. {n['content']}" for i, n in enumerate(self.notes, 1))
 
     @tool(
-        "Save the most recently captured image to disk.",
-        params={"filename": {"type": "string"}},
+        "Save the most recently captured image to disk, optionally with a note about it.",
+        params={"filename": {"type": "string"}, "note": {"type": "string"}},
     )
-    def save_last_image(self, filename: str = None) -> str:
+    def save_last_image(self, filename: str = None, note: str = None) -> str:
         if self.pal.last_image is None:
             return "No image available to save."
         if filename is None:
             filename = f"capture_{int(time.time())}"
+        SAVED_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(SAVED_IMAGES_DIR / f"{filename}.jpg"), self.pal.last_image)
-        return f"Image saved as {filename}.jpg"
+        if note is None:
+            return f"Image saved as {filename}.jpg"
+        # JPEG has no convenient place for text via cv2, so the note lives in a sidecar file.
+        sidecar = {"image": f"{filename}.jpg", "note": note, "timestamp": time.time()}
+        (SAVED_IMAGES_DIR / f"{filename}.json").write_text(json.dumps(sidecar, indent=2))
+        return f"Image saved as {filename}.jpg with note: {note}"
 
     @tool(
         "Set a timer that will alert the user after a duration in seconds.",

@@ -25,6 +25,7 @@ dependencies = [
     "anthropic (>=0.120.0,<0.121.0)",
     "python-dotenv (>=1.2.2,<2.0.0)",
     "lap (>=0.5.12,<1.0.0)",
+    "typesafe-sdk (>=0.7.4,<0.8.0)",
 ]
 
 

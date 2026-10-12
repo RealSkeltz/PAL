@@ -13,7 +13,7 @@ from pynput import keyboard
 from pal.utils.timing import timed
 from pal.status import State, status
 from pal.constants.visual_cues import VISUAL_CUES
-from pal.llm import Turn, get_client
+from pal.clients import Turn, get_client
 from pal.types import InputObject
 from pal.voice.speak import play_sound
 from pal.voice.sounds import processing_tone
