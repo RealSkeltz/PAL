@@ -12,7 +12,7 @@ from pynput import keyboard
 
 from pal.utils.timing import timed
 from pal.constants.visual_cues import VISUAL_CUES
-from pal.llm import Turn, get_client
+from pal.clients import Turn, get_client
 from pal.types import InputObject
 from pal.voice.speak import play_sound
 from pal.voice.sounds import processing_tone
@@ -21,6 +21,9 @@ from pal.perception import audio_loop
 from pal import interact
 from pal.tools.builtin import BuiltinTools
 from pal.debug.preview import preview
+from pal.system_one.should_respond import should_speak
+from pal.system_one.utils import heard
+
 
 class Pal(ABC):
     # Subclasses override with their own ToolHandler to add agent-specific tools.
@@ -41,6 +44,10 @@ class Pal(ABC):
         self.stop_event = threading.Event()
         self.is_speaking = threading.Event()
         self.last_spoke_at = 0.0
+        # Set when the current input has been fully handled; text mode waits on it
+        # so the prompt only appears once PAL's output for the turn is done.
+        self.turn_finished = threading.Event()
+        self.turn_finished.set()
 
         self.spoken_words: deque = deque(maxlen=200)
         self.last_image = None
@@ -63,37 +70,67 @@ class Pal(ABC):
 
         def feed_msg(gen):
             print("[Start up] feed_msg thread started")
-            GRACE_SECONDS = 2
             for msg in gen:
-                print(f"[Main loop] Message received: {msg.content if msg.content else 'empty'}")
-
+                # TODO: support barge-in. With a headset PAL can't hear itself, so this
+                # no longer guards against echo; it only stops the user from interrupting
+                # ("PAL, stop"). Instead, cut off TTS and start a new turn.
                 if self.is_speaking.is_set():
-                    print("[Debug] currently speaking, ignoring input")
+                    print(f"[Ignored]  {msg.content!r} (PAL is speaking)")
+                    self.turn_finished.set()
                     continue
 
-                if (time.time() - self.last_spoke_at) < GRACE_SECONDS:
-                    print("[Debug] within post-speech grace period, ignoring input")
-                    continue
-                
                 # Auto-trigger camera if utterance contains visual cues
                 words = set(re.findall(r"\b[\w']+\b", msg.content.lower()))
                 matched = words & VISUAL_CUES
                 if matched:
-                    print(f"[Main loop] Visual cue detected ({matched}), triggering camera")
+                    print(f"[Vision]   visual cue {sorted(matched)}, triggering camera")
                     self.vision_trigger.set()
 
                 #self.vision_trigger.set()
-                print("[Main loop] Message accepted, queueing for processing")
                 preview.add_event("user_speech", {"text": msg.content})
                 self.internal_message_queue.put(msg)
 
         def process_messages():
             print("[Start up] process_messages thread started")
+            # Within this window after PAL spoke, the next utterance counts as a follow-up.
+            # Kept short: after it, the gate sees `recent` and catches most follow-ups itself.
+            CONVERSATION_WINDOW_SECONDS = 5
+
+            turn_counter = 0
             while True:
                 self.stop_event.clear()
                 message = self.internal_message_queue.get()
                 turn_start = time.time()
                 query = message.content
+
+                turn_counter += 1
+                print(f"\n{'-' * 24} Turn {turn_counter} {'-' * 24}")
+                print(f"[Heard]    {query!r}")
+
+                # Gate before anything is queued, latched, or added to history.
+                # If the gate itself fails, respond anyway rather than go quiet.
+                # TODO: speech PAL stays silent on is currently dropped, but the assistant
+                # may need to know what went on around it. Once world events are kept
+                # separately from conversation history, record silent utterances there
+                # instead of discarding them.
+                decision = None
+                if re.search(r"\bpal\b", query, re.IGNORECASE):
+                    print("[Gate]     skipped: addressed by name")
+                elif (time.time() - self.last_spoke_at) < CONVERSATION_WINDOW_SECONDS:
+                    print("[Gate]     skipped: within conversation window")
+                else:
+                    try:
+                        recent = [f"{t.role}: {t.text}" for t in self.conversation[-4:] if t.text]
+                        decision = should_speak(heard(query, scene=None, recent=recent))
+                        print(f"[Gate]     {'speak' if decision.speak else 'silent'} "
+                              f"({decision.reason}, p={decision.probability:.2f})")
+                    except Exception:
+                        print("[Gate]     failed, responding anyway:")
+                        traceback.print_exc(file=sys.stdout)
+
+                if decision is not None and not decision.speak:
+                    self.turn_finished.set()
+                    continue
 
                 # Drain image queue, take latest
                 latest = None
@@ -108,7 +145,7 @@ class Pal(ABC):
                     try:
                         latest = self.internal_image_queue.get(timeout=1.0)
                     except queue.Empty:
-                        print("[Main loop] Vision trigger pending but no image arrived")
+                        print("[Image]    vision trigger pending but no image arrived")
 
                 # Build user turn
                 user_turn = Turn(role="user", text=query)
@@ -118,13 +155,12 @@ class Pal(ABC):
                     with timed("encode_image"):
                         user_turn.images = [self.numpy_to_base64(crop)]
                     preview.add_event("image_attached", {"label": label, "conf": round(conf, 2)})
-                    print(f"[Main loop] Image attached to message: {label} ({conf:.2f})")
+                    print(f"[Image]    attached: {label} ({conf:.2f})")
                 else:
-                    print("[Main loop] No image queued, sending text-only")
+                    print("[Image]    none, text only")
                     #play_sound(processing_tone())
                 self.conversation.append(user_turn)
 
-                print(f"[Main loop] Processing query: {query[:50] if query else 'empty'}")
                 self.is_speaking.set()
 
                 # Run the agentic turn — interact.run handles tool calls and
@@ -138,16 +174,16 @@ class Pal(ABC):
                         client=self.client,
                         tool_handler=self.tool_handler,
                     )
-                    elapsed_ms = (time.time() - turn_start) * 1000
-                    print(f"[Timing] time_to_first_spoken_word: {elapsed_ms:.0f}ms")
                 except Exception:
-                    print("[Main loop] Turn failed:")
+                    print("[Error]    turn failed:")
                     traceback.print_exc(file=sys.stdout)
                 finally:
                     self.is_speaking.clear()
                     self.last_spoke_at = time.time()
-                print(f"[Main loop] Response complete, history length: {len(self.conversation)}")
+                elapsed_ms = (time.time() - turn_start) * 1000
+                print(f"[Done]     {elapsed_ms:.0f}ms, history length {len(self.conversation)}")
                 self.trim_conversation_history()
+                self.turn_finished.set()
 
         input_source = self._text_input() if text_mode else self._listen()
         threading.Thread(target=feed_msg, args=(input_source,), daemon=True).start()
@@ -158,7 +194,7 @@ class Pal(ABC):
             for img in gen:
                 crop, label, conf = img
                 self.internal_image_queue.put(img)
-                print(f"[Main loop] Image queued: {label} ({conf:.2f}), queue size: {self.internal_image_queue.qsize()}")
+                print(f"[Vision]   queued {label} ({conf:.2f}), queue size {self.internal_image_queue.qsize()}")
 
 
         threading.Thread(target=feed_img, args=(self._see(),), daemon=True).start()
@@ -178,8 +214,9 @@ class Pal(ABC):
         print("[Start up] _text_input started")
         print("[Text mode] Type messages and press Enter. Ctrl+D to quit.")
         while True:
+            self.turn_finished.wait()
             try:
-                line = input("> ").strip()
+                line = input("\nUser input: ").strip()
             except EOFError:
                 print("\n[Text mode] EOF, exiting")
                 break
@@ -188,6 +225,7 @@ class Pal(ABC):
                 break
             if not line:
                 continue
+            self.turn_finished.clear()
             # Match the Message wrapper your audio_loop yields
             yield InputObject(type="text", content=line)
 
@@ -201,7 +239,7 @@ class Pal(ABC):
                 if self.conversation[i].role == "user":
                     dropped = i
                     self.conversation = self.conversation[i:]
-                    print(f"[Main loop] History trimmed, dropped {dropped} entries")
+                    print(f"[History]  trimmed, dropped {dropped} entries")
                     break
 
         # Strip images from older user turns (keep only on most recent)
@@ -212,7 +250,7 @@ class Pal(ABC):
                 self.conversation[i].images = []
                 stripped += 1
         if stripped:
-            print(f"[Main loop] Stripped images from {stripped} older turns")
+            print(f"[History]  stripped images from {stripped} older turns")
 
     def numpy_to_base64(self, img):
         _, buffer = cv2.imencode(".jpg", img)
