@@ -10,6 +10,12 @@ from pal.constants.whisper_prompt import WHISPER_PROMPT
 
 from pal.utils.timing import timed
 
+from pal.perception.audio.voice_analysis.code.encoder import verify, load_encoder
+import torch
+
+voiceprint = torch.load('/Users/jscheltema/Documents/Personal/PAL/pal/perception/audio/voice_analysis/data/voiceprint/voiceprint_me.pt')
+encoder, threshold = load_encoder()
+
 model = WhisperModel("distil-small.en", device="auto", compute_type="float32", cpu_threads=4)
 
 audio_queue = queue.Queue()
@@ -65,27 +71,30 @@ def transcribe_audio():
             
             if len(audio) < 4000:
                 continue
-            
+
+            is_user = verify(voiceprint, audio, encoder, 0.7)[0]
+
             with timed("STT"):
                 segments, info = model.transcribe(
                     audio,
                     vad_filter=False,
                     vad_parameters=dict(min_silence_duration_ms=500, threshold=0.5),
                     language='en',
-                    condition_on_previous_text=False,
+                    condition_on_previous_text=True,
                     initial_prompt=WHISPER_PROMPT,
                 )
                 text = " ".join(s.text for s in segments).strip()
             if text:
                 transcript[chunk_id] = text
                 chunk_id += 1
-                result_queue.put(text)
+                message = (text, is_user)
+                result_queue.put(message)
 
 def run() -> Generator[InputObject, None, None]:
     threading.Thread(target=transcribe_audio, daemon=True).start()
     with sd.InputStream(samplerate=16000, channels=1, dtype='float32',
                         blocksize=1600, callback=callback):
         while True:
-            text = result_queue.get()
-            yield InputObject(type="audio", content=text)
+            text, is_user = result_queue.get()  # one get per utterance, text and speaker check belong together
+            yield InputObject(type="audio", content=text, is_user=is_user)
         

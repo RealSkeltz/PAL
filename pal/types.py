@@ -5,6 +5,7 @@ from dataclasses import dataclass
 class InputObject:
     type: str
     content: any
+    is_user: bool
     oid: int = 0
 
 

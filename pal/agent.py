@@ -9,6 +9,7 @@ import threading
 import cv2
 import base64
 from pynput import keyboard
+import torch
 
 from pal.perception.vision import understand
 from pal.utils.timing import timed
@@ -24,7 +25,7 @@ from pal.tools.builtin import BuiltinTools
 from pal.debug.preview import preview
 from pal.system_one.should_respond import should_speak
 from pal.system_one.utils import heard
-
+from pal.perception.audio.voice_analysis.code.encoder import verify, load_encoder
 
 class Pal(ABC):
     # Subclasses override with their own ToolHandler to add agent-specific tools.
@@ -89,7 +90,11 @@ class Pal(ABC):
 
                 #self.vision_trigger.set()
                 preview.add_event("user_speech", {"text": msg.content})
-                self.internal_message_queue.put(msg)
+
+                if msg.is_user:
+                    self.internal_message_queue.put(msg)
+                else:
+                    print(f"[Rejected] {msg.content!r} (not the enrolled voice)")
 
         def process_messages():
             print("[Start up] process_messages thread started")
@@ -228,7 +233,7 @@ class Pal(ABC):
                 continue
             self.turn_finished.clear()
             # Match the Message wrapper your audio_loop yields
-            yield InputObject(type="text", content=line)
+            yield InputObject(type="text", content=line, is_user=True)
 
     # Helper
     def trim_conversation_history(self):
