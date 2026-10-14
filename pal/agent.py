@@ -10,14 +10,15 @@ import cv2
 import base64
 from pynput import keyboard
 
+from pal.perception.vision import understand
 from pal.utils.timing import timed
 from pal.constants.visual_cues import VISUAL_CUES
 from pal.clients import Turn, get_client
 from pal.types import InputObject
 from pal.voice.speak import play_sound
 from pal.voice.sounds import processing_tone
-from pal.perception import vision_loop, understand
-from pal.perception import audio_loop
+from pal.perception.vision import vision_loop
+from pal.perception.audio import audio_loop
 from pal import interact
 from pal.tools.builtin import BuiltinTools
 from pal.debug.preview import preview
