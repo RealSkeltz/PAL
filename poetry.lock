@@ -2600,6 +2600,24 @@ httpx = ">=0.27"
 pydantic = ">=2.9"
 
 [[package]]
+name = "omegaconf"
+version = "2.4.0"
+description = "A flexible configuration library"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "omegaconf-2.4.0-py3-none-any.whl", hash = "sha256:f141a664c777582405e3cc6e0545ecc79429e79f844995b1a6e71c35946a025c"},
+    {file = "omegaconf-2.4.0.tar.gz", hash = "sha256:7e219a70bea371da250285b9c01c7db027bc421722799c2cc4ff14bc4a2a753b"},
+]
+
+[package.dependencies]
+PyYAML = ">=5.1.0"
+
+[package.extras]
+dev = ["PyYAML (>=5.1.0)", "attrs", "build", "bump-my-version", "coveralls", "nox[pbs]", "pre-commit", "pydevd", "pyrefly (==1.2.0)", "pytest", "pytest-benchmark", "pytest-mock", "ruff (==0.15.22)", "sphinx", "sphinx-tabs", "towncrier", "twine"]
+
+[[package]]
 name = "onnxruntime"
 version = "1.24.4"
 description = "ONNX Runtime is a runtime accelerator for Machine Learning models"
@@ -4373,6 +4391,23 @@ files = [
 ]
 
 [[package]]
+name = "silero"
+version = "0.5.5"
+description = "Silero Models: pre-trained enterprise-grade TTS models."
+optional = false
+python-versions = ">=3.7"
+groups = ["main"]
+files = [
+    {file = "silero-0.5.5-py3-none-any.whl", hash = "sha256:ce95bffcbe60ec1462a12e90091310338788ccb6f8eb00ccfbc11a2f4334315a"},
+    {file = "silero-0.5.5.tar.gz", hash = "sha256:08282b11b591a74cf2efd91761952d1d1b6790b875a962ad8cd8817d641bca5b"},
+]
+
+[package.dependencies]
+numpy = ">=1.23.0"
+omegaconf = ">=2.1.0"
+torch = ">=1.12.0"
+
+[[package]]
 name = "six"
 version = "1.17.0"
 description = "Python 2 and 3 compatibility utilities"
@@ -5065,4 +5100,4 @@ dev = ["check-manifest", "memory_profiler", "nose", "psutil", "unittest2", "zest
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.14"
-content-hash = "45210b826c8e31a4ca4e5d89d9d1172542268175ef9445cad72ca361246104cb"
+content-hash = "181cdbcd6efa8347f71fc3234fe75cc1adef55b8200e6174936f2a9b4495beb3"

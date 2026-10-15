@@ -14,7 +14,11 @@ from pal.perception.audio.voice_analysis.code.encoder import verify, load_encode
 import torch
 
 voiceprint = torch.load('/Users/jscheltema/Documents/Personal/PAL/pal/perception/audio/voice_analysis/data/voiceprint/voiceprint_me.pt')
-encoder, threshold = load_encoder()
+encoder, _ = load_encoder()
+# The checkpoint's threshold (0.864) was tuned on full-length synthetic clips. Live utterances are
+# often under a second and score lower for the same speaker (median ~0.82 at 0.5 s vs 0.99 at 3 s),
+# while another voice stayed below ~0.3 at any length, so 0.5 keeps a margin on both sides.
+SPEAKER_THRESHOLD = 0.5
 
 model = WhisperModel("distil-small.en", device="auto", compute_type="float32", cpu_threads=4)
 
@@ -72,7 +76,8 @@ def transcribe_audio():
             if len(audio) < 4000:
                 continue
 
-            is_user = verify(voiceprint, audio, encoder, 0.7)[0]
+            is_user, score = verify(voiceprint, audio, encoder, SPEAKER_THRESHOLD)
+            print(f"[Speaker]  score {score:.2f} ({len(audio) / 16000:.1f}s) -> {'user' if is_user else 'other'}")
 
             with timed("STT"):
                 segments, info = model.transcribe(

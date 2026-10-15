@@ -18,18 +18,19 @@ SPEECH_QUESTIONS = {
         ),
         'criteria': {
             'addressed': (
-                "The user is speaking to PAL: they call PAL by name to ask or tell it something, "
-                "continue a conversation PAL is part of, or give an assistant-style request while "
-                "nobody else is around."
+                "The user is speaking to PAL: they call PAL by name, continue a conversation PAL is "
+                "part of, or ask a question or give a request a voice assistant would handle, such as "
+                "asking the time, what they are looking at, where something is, or to set a timer or "
+                "change the volume."
             ),
             'can_help': (
-                "The speech is not meant for PAL, but the user is stuck on something PAL can clearly "
-                "resolve from its memories or the scene, such as looking for an object PAL has seen."
+                "The speech is not directed at PAL, for example the user thinking aloud or talking to "
+                "someone else, but the user is stuck on something PAL can clearly resolve from its "
+                "memories or the scene, such as looking for an object PAL has seen."
             ),
             'not_for_pal': (
-                "The speech is meant for another person, is someone other than the user talking, is "
-                "small talk, merely mentions PAL, or is the user thinking aloud about something PAL "
-                "cannot help with."
+                "The speech is clearly meant for another person, is small talk or an exclamation, "
+                "merely mentions PAL, or is the user thinking aloud about something PAL cannot help with."
             ),
         },
     },
@@ -63,8 +64,14 @@ QUESTIONS = {'speech': SPEECH_QUESTIONS, 'scene': SCENE_QUESTIONS}
 
 client = get_client('typesafe:tev1:4b')
 
-# Choices that make PAL speak, with the minimum probability each needs.
-MIN_PROB = {'addressed': 0.5, 'warn': 0.5, 'can_help': 0.6}
+# Choices that make PAL speak, with the minimum probability each needs, per event type.
+# Speech only reaches the gate after the speaker check confirmed it is the user, so PAL
+# answers unless the gate's top choice is not_for_pal; with three choices the winner is
+# often below 0.5, and requiring more made PAL ignore most plain requests.
+MIN_PROB = {
+    'speech': {'addressed': 0.0, 'can_help': 0.0},
+    'scene': {'warn': 0.5, 'can_help': 0.6},
+}
 
 
 @dataclass
@@ -78,5 +85,6 @@ class Decision:
 def should_speak(state, min_prob=MIN_PROB) -> Decision:
     answer = client.decide(state, QUESTIONS[state['event']['type']]).answers['should_speak']
     p = answer.probabilities[answer.choice]
-    speak = answer.choice in min_prob and p >= min_prob[answer.choice]
+    thresholds = min_prob[state['event']['type']]
+    speak = answer.choice in thresholds and p >= thresholds[answer.choice]
     return Decision(speak, answer.choice, p, answer.probabilities)
