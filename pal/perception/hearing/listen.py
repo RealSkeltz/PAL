@@ -41,7 +41,8 @@ COMMIT_AFTER = round(0.5 / CHUNK_SEC)       # long pause: the utterance is finis
 MIN_SPEECH_CHUNKS = round(0.3 / CHUNK_SEC)  # less speech than this is a blip, not an utterance
 MAX_BUFFER_CHUNKS = round(20 / CHUNK_SEC)   # safety cap for one utterance
 # Recognising the user takes some speech: from 0.5 s it works most of the time, and
-# it is re-checked as more arrives. Other voices practically never pass.
+# it is re-checked as more arrives. Other voices practically never pass. A short burst
+# ("stop") is checked the moment it ends, since it never reaches 0.5 s.
 CHECK_USER_FROM = round(0.5 / CHUNK_SEC)
 CHECK_USER_EVERY = round(0.25 / CHUNK_SEC)
 
@@ -60,6 +61,14 @@ def process(audio):
         )
         text = " ".join(s.text for s in segments).strip()
     return text, is_user, float(score), len(audio) / 16000
+
+def check_user(speech_chunks, on_user_speaking) -> bool:
+    """Early speaker check on the speech so far; signals once it recognises the user."""
+    is_user, score = verify(voiceprint, np.concatenate(speech_chunks).reshape(-1), encoder, SPEAKER_THRESHOLD)
+    logger.debug(f"early speaker check {score:.2f} after {len(speech_chunks) * CHUNK_SEC:.2f}s")
+    if is_user:
+        on_user_speaking()
+    return is_user
 
 def transcribe_audio(on_user_speaking):
     global chunk_id
@@ -81,16 +90,15 @@ def transcribe_audio(on_user_speaking):
             speech_chunks += 1
             if not user_confirmed and speech_chunks >= CHECK_USER_FROM \
                     and (speech_chunks - CHECK_USER_FROM) % CHECK_USER_EVERY == 0:
-                user_confirmed, score = verify(voiceprint, np.concatenate(speech).reshape(-1), encoder, SPEAKER_THRESHOLD)
-                logger.debug(f"early speaker check {score:.2f} after {speech_chunks * CHUNK_SEC:.2f}s")
-                if user_confirmed:
-                    on_user_speaking()
+                user_confirmed = check_user(speech, on_user_speaking)
             silence_chunks = 0
             in_speech = True
         elif in_speech:
             
             buffer.append(chunk)
             silence_chunks += 1
+            if silence_chunks == 1 and not user_confirmed and speech_chunks >= MIN_SPEECH_CHUNKS:
+                user_confirmed = check_user(speech, on_user_speaking)  # a short burst just ended
         else:
             continue 
 
