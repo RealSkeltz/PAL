@@ -1,6 +1,6 @@
 """Wires PAL together. Each stage runs on its own thread:
 
-    senses ──► events ──► router ──► history ──► responder ──► voice
+    senses ──► events ──► router ──► memory ──► responder ──► voice
                   camera ──► captures ──┘ (attached to user turns)
 
 The router only appends user turns and wakes the responder; the responder
@@ -31,8 +31,9 @@ from pal.response.responder import respond
 from pal.routing.router import EventRouter
 from pal.routing.system_one import client as gate_client
 from pal.log import record
-from pal.schemas.event import Actor, Event, Observation, Role, Written
-from pal.schemas.turn import ConversationTurn, Response, UserTurn
+from pal.memory import Memory
+from pal.schemas.event import Actor, Observation, Role, Written
+from pal.schemas.turn import UserTurn
 from pal.tools.builtin import BuiltinTools
 from pal.voice.sounds import capture_tone
 from pal.voice.voice import Voice
@@ -56,8 +57,7 @@ class Pal:
         self.client = get_client(self.model)
 
         # State
-        self.history: list[ConversationTurn] = []
-        self.context: list[Event] = []
+        self.memory = Memory()
         self.last_image = None  # read by the save_last_image tool
         self.last_spoke_at = 0.0
 
@@ -79,7 +79,7 @@ class Pal:
 
         self.tool_handler = BuiltinTools(self)
         self.router = EventRouter(
-            self.history, self.context, self.captures, self.vision_trigger,
+            self.memory, self.captures, self.vision_trigger,
             on_user_turn=self._on_user_turn,
             last_spoke_at=lambda: self.last_spoke_at,
         )
@@ -156,12 +156,12 @@ class Pal:
         while True:
             self._wake.wait()
             self._wake.clear()
-            pending = [t for t in self.history if isinstance(t, UserTurn) and t.response is Response.PENDING]
+            pending = self.memory.pending()
             if pending:
                 self.cancel.clear()
                 self._responding = True
                 try:
-                    respond(self.history, pending, self.system_prompt, self.client, self.voice,
+                    respond(self.memory.history, pending, self.system_prompt, self.client, self.voice,
                             tools=self.tool_handler, cancel=self.cancel)
                 finally:
                     self._responding = False

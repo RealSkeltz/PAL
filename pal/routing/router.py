@@ -14,8 +14,9 @@ from typing import Callable
 
 from pal.routing.gate import addressed_by_name, assess, within_conversation_window
 from pal.log import record
+from pal.memory import Memory
 from pal.schemas.event import Actor, Event, Language, Observation, Role
-from pal.schemas.turn import ConversationTurn, UserTurn
+from pal.schemas.turn import UserTurn
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +26,13 @@ CAPTURE_WAIT_SECONDS = 1.0
 class EventRouter:
     def __init__(
         self,
-        history: list[ConversationTurn],
-        context: list[Event],
+        memory: Memory,
         captures: queue.Queue,
         vision_trigger: threading.Event,
         on_user_turn: Callable[[UserTurn], None],
         last_spoke_at: Callable[[], float],
     ):
-        self.history = history
-        self.context = context
+        self.memory = memory
         self.captures = captures
         self.vision_trigger = vision_trigger
         self.on_user_turn = on_user_turn
@@ -46,23 +45,23 @@ class EventRouter:
 
     def route(self, event: Event):
         if not isinstance(event, Language):
-            self.context.append(event)
+            self.memory.add_event(event)
             return
 
         logger.info(f"heard {event.actor.value}: {event.text!r}")
 
         if event.actor is not Actor.USER:
-            self.context.append(event)
+            self.memory.add_event(event)
             return
 
         speak, look = self._assess(event)
         if not speak:
-            self.context.append(event)
+            self.memory.add_event(event)
             return
 
         event = replace(event, role=Role.DIRECT)
         turn = UserTurn(utterance=event, attachments=self._attachments(look))
-        self.history.append(turn)
+        self.memory.add_turn(turn)
         self.on_user_turn(turn)
 
     def _assess(self, event: Language) -> tuple[bool, bool]:
@@ -77,7 +76,7 @@ class EventRouter:
             via = "model"
 
         try:
-            speak_decision, look_decision = assess(event.text, self.history, ask_speak=via == "model")
+            speak_decision, look_decision = assess(event.text, self.memory.history, ask_speak=via == "model")
         except Exception:
             logger.exception("gate failed, responding anyway, without the camera")
             speak_decision = look_decision = None
@@ -108,7 +107,7 @@ class EventRouter:
         except queue.Empty:
             logger.info("camera triggered but no image arrived")
             return []
-        self.context.append(capture)
+        self.memory.add_event(capture)
         return [capture]
 
     def _drain_captures(self) -> Observation | None:
@@ -118,4 +117,4 @@ class EventRouter:
                 latest = self.captures.get_nowait()
             except queue.Empty:
                 return latest
-            self.context.append(latest)
+            self.memory.add_event(latest)
