@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 from pal.agent import Pal
-from pal.context import build_system_prompt
+from pal.response.prompt import build_system_prompt
 from agents.scout.tools import ScoutTools
 
 CONTEXT_DIR = Path(__file__).parent / "context"

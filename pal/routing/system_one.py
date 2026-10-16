@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from pal.clients import get_client
+from pal.llm import get_client
 
 STATE_DESCRIPTION = (
     "The state describes a moment for a user wearing PAL, a voice assistant with a camera and "
@@ -64,16 +64,6 @@ QUESTIONS = {'speech': SPEECH_QUESTIONS, 'scene': SCENE_QUESTIONS}
 
 client = get_client('typesafe:tev1:4b')
 
-# Choices that make PAL speak, with the minimum probability each needs, per event type.
-# Speech only reaches the gate after the speaker check confirmed it is the user, so PAL
-# answers unless the gate's top choice is not_for_pal; with three choices the winner is
-# often below 0.5, and requiring more made PAL ignore most plain requests.
-MIN_PROB = {
-    'speech': {'addressed': 0.0, 'can_help': 0.0},
-    'scene': {'warn': 0.5, 'can_help': 0.6},
-}
-
-
 @dataclass
 class Decision:
     speak: bool
@@ -82,9 +72,24 @@ class Decision:
     probabilities: dict[str, float]
 
 
-def should_speak(state, min_prob=MIN_PROB) -> Decision:
+def get_should_answer_noul(state) -> Decision:
     answer = client.decide(state, QUESTIONS[state['event']['type']]).answers['should_speak']
-    p = answer.probabilities[answer.choice]
-    thresholds = min_prob[state['event']['type']]
-    speak = answer.choice in thresholds and p >= thresholds[answer.choice]
-    return Decision(speak, answer.choice, p, answer.probabilities)
+    return answer
+
+
+def make_state(event, scene=None, watching_for=(), memories=(), recent=()):
+    """Stable context first, the new event last."""
+    state = {'watching_for': list(watching_for), 'memories': list(memories), 'recent': list(recent)}
+    if scene is not None:
+        state['scene'] = scene
+    state['event'] = event
+    return state
+
+
+def heard(text, scene, speaker='user', **context):
+    return make_state({'type': 'speech', 'speaker': speaker, 'text': text}, scene=scene, **context)
+
+
+def seen(description, **context):
+    return make_state({'type': 'scene', 'description': description}, **context)
+

@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 
+from pal.config import SPEAKER_DATA
+
 
 def record_sound(filename: str, duration: int):
 
@@ -19,7 +21,7 @@ def record_sound(filename: str, duration: int):
     sd.wait()
     print("Recording done.")
 
-    sf.write(Path(__file__).parents[1] / "data" / "mine" / f"{filename}.wav", audio, sr, subtype="PCM_16")
+    sf.write(SPEAKER_DATA / "mine" / f"{filename}.wav", audio, sr, subtype="PCM_16")
 
 
 def plot_spectogram(sound):

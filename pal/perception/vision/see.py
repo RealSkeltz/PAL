@@ -8,13 +8,8 @@ import numpy as np
 
 from typing import Generator
 from pal.config import VISION_MODELS
-from pal.voice.sounds import capture_tone
-from pal.types import Message
-from pal.voice.speak import play_sound
 
 from pal.debug.preview import preview
-
-from pal.controls.headset import start_headset_listener
 
 TARGET_FPS = 5
 DELAY = int(1000 / TARGET_FPS)
@@ -90,7 +85,7 @@ def downscale(frame: np.ndarray) -> np.ndarray:
     return cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
 
-def run(trigger: threading.Event, detect: bool = True) -> Generator[Message, None, None]:
+def run(trigger: threading.Event, detect: bool = True) -> Generator[tuple[np.ndarray, str, float], None, None]:
     """Capture on trigger and yield (image, label, confidence).
 
     With `detect`, YOLO runs every frame and the trigger yields a crop of the
@@ -134,7 +129,6 @@ def run(trigger: threading.Event, detect: bool = True) -> Generator[Message, Non
             # so a slow consumer shouldn't hold the camera armed.
             trigger.clear()
             if capture is not None:
-                play_sound(capture_tone())
                 yield capture
 
         cv2.waitKey(DELAY)

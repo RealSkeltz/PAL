@@ -6,13 +6,14 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-from pal.perception.audio.voice_analysis.code.data_generation import DataSample, extract_voice_features, sample_pair
-from pal.perception.audio.voice_analysis.code.synthetic_data_generation import synthetic_files_by_voice
+from pal.config import SPEAKER_DATA
+from data_generation import DataSample, extract_voice_features, sample_pair
+from synthetic_data_generation import synthetic_files_by_voice
 
 
-BASE_DIR = Path(__file__).parents[1]  # voice_analysis/ (this file is in voice_analysis/code/)
-LIBRISPEECH_DIR = BASE_DIR / "data" / "slr" / "LibriSpeech"
-SAMPLES_DIR = BASE_DIR / "data" / "samples"
+BASE_DIR = SPEAKER_DATA  # sample files store paths relative to this
+LIBRISPEECH_DIR = BASE_DIR / "slr" / "LibriSpeech"
+SAMPLES_DIR = BASE_DIR / "samples"
 
 
 @lru_cache(maxsize=None)

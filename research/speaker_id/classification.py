@@ -95,7 +95,7 @@ import random
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from encoder import SpeakerDataset, SpeakerEncoder, SmallSpeakerEncoder, load_wave, log_mel
+from pal.perception.hearing.speaker_encoder import SpeakerDataset, SpeakerEncoder, SmallSpeakerEncoder, load_wave, log_mel
 
 
 def train_encoder(files_by_speaker, EncoderClass, epochs=30, val_frac=0.1, batch_size=64, num_workers=4):

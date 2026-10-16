@@ -6,12 +6,12 @@ from pathlib import Path
 
 import soundfile as sf
 
-from pal.perception.audio.voice_analysis.code.data_generation import DataSample, sample_pair
+from pal.config import SPEAKER_DATA
+from data_generation import DataSample, sample_pair
 
 
-BASE_DIR = Path(__file__).parents[1]  # voice_analysis/ (this file is in voice_analysis/code/)
-TTS_DIR = BASE_DIR / "data" / "tts"
-SENTENCES_FILE = BASE_DIR / "resources" / "sentences.txt"
+TTS_DIR = SPEAKER_DATA / "tts"
+SENTENCES_FILE = Path(__file__).parent / "sentences.txt"
 
 # One sentence per line, id = line number (matches the 001.wav ... file names)
 SENTENCES = {i: line for i, line in enumerate(SENTENCES_FILE.read_text().splitlines(), 1) if line.strip()}
@@ -24,7 +24,7 @@ def generate_tts(voices: list[str] | None = None, speed: float = 1.0) -> dict:
     Returns tts[voice][sentence_id] = Path to the wav file.
     """
     # Imported here so the rest of this module works without loading the TTS model
-    from pal.voice.speak import kokoro
+    from pal.voice.tts import kokoro
 
     voices = voices or list(kokoro.voices)
     tts = {}

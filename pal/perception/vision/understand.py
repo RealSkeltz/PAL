@@ -3,7 +3,7 @@ import base64
 
 import cv2
 
-from pal.clients import Turn
+from pal.llm import Turn
 
 
 def understand_image(image, context: str, client) -> str:

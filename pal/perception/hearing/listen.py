@@ -5,16 +5,16 @@ import queue
 from concurrent.futures import ThreadPoolExecutor
 from faster_whisper import WhisperModel
 from typing import Generator
-from pal.types import Message
-from pal.types import InputObject
-from pal.constants.whisper_prompt import WHISPER_PROMPT
+from pal.config import VOICEPRINTS_DIR
+from pal.schemas.event import Actor, Role, Spoken
+from pal.perception.hearing.whisper_prompt import WHISPER_PROMPT
 
-from pal.utils.timing import timed
+from pal.debug.timing import timed
 
-from pal.perception.audio.voice_analysis.code.encoder import verify, load_encoder
+from pal.perception.hearing.speaker_encoder import verify, load_encoder
 import torch
 
-voiceprint = torch.load('/Users/jscheltema/Documents/Personal/PAL/pal/perception/audio/voice_analysis/data/voiceprint/voiceprint_me.pt')
+voiceprint = torch.load(VOICEPRINTS_DIR / "voiceprint_me.pt")
 encoder, _ = load_encoder()
 
 SPEAKER_THRESHOLD = 0.5
@@ -60,7 +60,7 @@ def process(audio):
             initial_prompt=WHISPER_PROMPT,
         )
         text = " ".join(s.text for s in segments).strip()
-    return text, is_user
+    return text, is_user, float(score), len(audio) / 16000
 
 def transcribe_audio():
     global chunk_id
@@ -94,22 +94,27 @@ def transcribe_audio():
 
         if silence_chunks >= COMMIT_AFTER or len(buffer) >= MAX_BUFFER_CHUNKS:
             if speech_chunks >= MIN_SPEECH_CHUNKS:
-                text, is_user = pending.result() if pending is not None else process(speech_audio())
+                text, is_user, score, duration = pending.result() if pending is not None else process(speech_audio())
                 if text:
                     transcript[chunk_id] = text
                     chunk_id += 1
-                    result_queue.put((text, is_user))
+                    result_queue.put(Spoken(
+                        actor=Actor.USER if is_user else Actor.OTHER,
+                        role=Role.CONTEXT,  # the router's gate decides what is direct
+                        text=text,
+                        duration_s=duration,
+                        speaker_score=score,
+                    ))
             buffer = []
             silence_chunks = 0
             speech_chunks = 0
             in_speech = False
             pending = None
 
-def run() -> Generator[InputObject, None, None]:
+def run() -> Generator[Spoken, None, None]:
     threading.Thread(target=transcribe_audio, daemon=True).start()
     with sd.InputStream(samplerate=16000, channels=1, dtype='float32',
                         blocksize=512, callback=callback):
         while True:
-            text, is_user = result_queue.get()  # one get per utterance, text and speaker check belong together
-            yield InputObject(type="audio", content=text, is_user=is_user)
+            yield result_queue.get()
         

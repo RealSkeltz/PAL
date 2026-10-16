@@ -8,6 +8,8 @@ import torch
 from torch import nn
 from torch.utils.data import Dataset
 
+from pal.config import SPEAKER_MODELS
+
 # _________ Audio preprocessing ________________________
 
 SR = 16000       # LibriSpeech sample rate; other audio gets resampled to this
@@ -158,12 +160,11 @@ def verify(voiceprint, audio, model, threshold, sr=SR):
 
 # _________ Saving / loading ________________________
 
-MODELS_DIR = Path(__file__).parents[1] / "data" / "models"
 AUDIO_CONFIG = {"sr": SR, "n_fft": N_FFT, "hop": HOP, "n_mels": N_MELS}
 ENCODERS = {cls.__name__: cls for cls in (SpeakerEncoder, SmallSpeakerEncoder)}
 
 
-def save_encoder(model, threshold, path=MODELS_DIR / "speaker_encoder.pt"):
+def save_encoder(model, threshold, path=SPEAKER_MODELS / "speaker_encoder.pt"):
     """Store weights plus everything needed to rebuild and use the encoder"""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,7 +185,7 @@ def save_encoder(model, threshold, path=MODELS_DIR / "speaker_encoder.pt"):
     }, path)
 
 
-def load_encoder(path=MODELS_DIR / "speaker_encoder.pt"):
+def load_encoder(path=SPEAKER_MODELS / "speaker_encoder.pt"):
     """Returns (model in eval mode, same-speaker threshold)"""
     ckpt = torch.load(path, map_location="cpu")
     assert ckpt["audio_config"] == AUDIO_CONFIG, "Audio settings differ from training"

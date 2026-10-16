@@ -2,7 +2,7 @@
 
 `anthropic` is imported lazily so the ollama path never depends on it.
 """
-from pal.clients.base import Completed, LLMClient, TextDelta, ToolCall, ToolSpec, Turn
+from pal.llm.base import Completed, LLMClient, TextDelta, ToolCall, ToolSpec, Turn
 
 DEFAULT_MODEL = "claude-opus-5"
 FOUNDRY_DEFAULT_MODEL = "claude-sonnet-4-6"
