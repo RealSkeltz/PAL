@@ -74,7 +74,7 @@ def respond(
                         utterance=Spoken(actor=Actor.PAL, role=Role.DIRECT, text=event.text) if event.text else None,
                         actions=event.actions,
                     )
-                    history.append(turn)
+                    _insert_reply(history, turn, user_turns)
                     recorded.append((step, turn))
                 step, partial = step + 1, ""
         voice.wait(cancel)
@@ -89,7 +89,7 @@ def respond(
         if partial.strip():  # cut off while the model was still writing this step
             turn = PalTurn(in_reply_to=[t.id for t in user_turns],
                            utterance=Spoken(actor=Actor.PAL, role=Role.DIRECT, text=partial.strip()))
-            history.append(turn)
+            _insert_reply(history, turn, user_turns)
             recorded.append((step, turn))
 
     for step_, turn in recorded:
@@ -97,6 +97,7 @@ def respond(
         heard = voice.heard((reply_id, step_))
         if cancel.is_set() and turn.utterance and (heard < words or step_ == step):
             turn.cancel(at_word=heard)
+            logger.info(f"cut off after {heard} of {words} words: {turn.spoken_text!r}")
         else:
             turn.delivery = Delivery.DONE
 
@@ -109,6 +110,15 @@ def respond(
         record("turn", turn)
 
 
+def _insert_reply(history, turn: PalTurn, user_turns: list[UserTurn]):
+    """Place a reply turn right after the last turn of this exchange, so a user turn that
+    interrupted it (appended meanwhile by the router) comes after it, as it happened."""
+    ids = {t.id for t in user_turns}
+    belongs = lambda t: t.id in ids or (isinstance(t, PalTurn) and set(t.in_reply_to) & ids)
+    last = max((i for i, t in enumerate(history) if belongs(t)), default=len(history) - 1)
+    history.insert(last + 1, turn)
+
+
 def _log_timing(start, user_turns, first_text, first_sentence, audio_starts):
     """One line per reply: where the time between hearing and speaking went."""
     since = lambda t: f"{t - start:.2f}s" if t else "-"
@@ -116,6 +126,15 @@ def _log_timing(start, user_turns, first_text, first_sentence, audio_starts):
     waited = start - user_turns[-1].utterance.at.timestamp()
     logger.info(f"timing: waited {waited:.2f}s, first text {since(first_text)}, first sentence {since(first_sentence)}, "
                 f"first audio {since(first_audio)}, done {since(time.time())}")
+
+
+# Words that open a new clause after a comma; a comma before anything else is not a good place to pause.
+CLAUSE_STARTERS = {
+    "and", "but", "or", "so", "yet", "because", "since", "while", "although", "though", "if", "unless",
+    "when", "where", "which", "who", "that", "then", "as", "after", "before", "until",
+    "i", "you", "he", "she", "it", "we", "they", "there", "this", "these", "those",
+    "the", "a", "an", "my", "your", "its", "our", "their",
+}
 
 
 class SentenceBuffer:
@@ -146,12 +165,15 @@ class SentenceBuffer:
         return _sentences(done)
 
     def _first_clause(self) -> str | None:
-        for m in re.finditer(r"[,;:](?=\s)", self.text):
-            clause = self.text[:m.end()]
+        # A comma only ends a clause when a new one starts after it ("..., but", "..., I"),
+        # not between adjectives ("dark, tousled hair") or before a name ("hear you, Job").
+        # Wait until the next word has fully arrived before deciding.
+        for m in re.finditer(r"[,;:]\s+([A-Za-z']+)(?=[\s,.;:!?])", self.text):
+            clause = self.text[:m.start() + 1]
             if re.search(r"[.!?\n]", clause):
                 return None  # a whole sentence came first; let the normal path take it
-            if len(clause.split()) >= self.MIN_FIRST_CLAUSE_WORDS:
-                self.text = self.text[m.end():]
+            if len(clause.split()) >= self.MIN_FIRST_CLAUSE_WORDS and m.group(1).lower() in CLAUSE_STARTERS:
+                self.text = self.text[m.start() + 1:]
                 self.first = False
                 return clause.strip()
         return None

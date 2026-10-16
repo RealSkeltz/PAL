@@ -4,9 +4,12 @@
                   camera ──► captures ──┘ (attached to user turns)
 
 The router only appends user turns and wakes the responder; the responder
-answers every pending user turn at once, so speech that arrives while PAL is
-talking is answered next instead of dropped. `self.cancel` cuts off the reply
-in progress; barge-in will set it.
+answers every pending user turn at once.
+
+Barge-in: the moment the user starts speaking while Buddy talks, the voice
+ducks. If the router then turns that speech into a user turn, the reply in
+progress is cancelled (`self.cancel`) and the new turn is answered; if it
+wasn't meant for Buddy, the volume comes back and the reply carries on.
 """
 import atexit
 import logging
@@ -67,6 +70,7 @@ class Pal:
         self.idle.set()
         self._wake = threading.Event()
         self._lock = threading.Lock()
+        self._responding = False
 
         # Controls
         self.vision_trigger = threading.Event()
@@ -77,6 +81,7 @@ class Pal:
             self.history, self.context, self.captures, self.vision_trigger,
             on_user_turn=self._on_user_turn,
             last_spoke_at=lambda: self.last_spoke_at,
+            on_not_for_pal=lambda event: self.voice.unduck(),
         )
         logger.info(f"initialized (response model {self.model}, gate model {gate_client.model})")
 
@@ -84,7 +89,7 @@ class Pal:
         """Start the agent. `detect` toggles YOLO object detection on the camera."""
         self.detect = detect
         self.voice.start()
-        _thread(self._feed, self._text_input() if text_mode else listen.run())
+        _thread(self._feed, self._text_input() if text_mode else listen.run(on_speech_start=self._on_speech_start, on_speech_dropped=self.voice.unduck))
         _thread(self._feed_captures, see.run(self.vision_trigger, detect=self.detect))
         _thread(self.router.run, self.events)
         _thread(self._respond_loop)
@@ -133,7 +138,14 @@ class Pal:
             self.captures.put(observation)
             logger.info(f"captured {label} ({conf:.2f})")
 
+    def _on_speech_start(self):
+        if self.voice.busy:
+            self.voice.duck()
+
     def _on_user_turn(self, turn: UserTurn):
+        if self._responding:
+            logger.info("barge-in: cutting off the current reply")
+            self.cancel.set()
         with self._lock:
             self.idle.clear()
             self._wake.set()
@@ -145,8 +157,12 @@ class Pal:
             pending = [t for t in self.history if isinstance(t, UserTurn) and t.response is Response.PENDING]
             if pending:
                 self.cancel.clear()
-                respond(self.history, pending, self.system_prompt, self.client, self.voice,
-                        tools=self.tool_handler, cancel=self.cancel)
+                self._responding = True
+                try:
+                    respond(self.history, pending, self.system_prompt, self.client, self.voice,
+                            tools=self.tool_handler, cancel=self.cancel)
+                finally:
+                    self._responding = False
                 self.last_spoke_at = time.time()
             with self._lock:
                 if not self._wake.is_set():

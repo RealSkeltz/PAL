@@ -65,7 +65,7 @@ def process(audio):
         text = " ".join(s.text for s in segments).strip()
     return text, is_user, float(score), len(audio) / 16000
 
-def transcribe_audio():
+def transcribe_audio(on_speech_start, on_speech_dropped):
     global chunk_id
     buffer = []
     silence_chunks = 0
@@ -77,6 +77,8 @@ def transcribe_audio():
         chunk = audio_queue.get()
 
         if contains_speech(chunk):
+            if not in_speech:
+                on_speech_start()
             pending = None 
             buffer.append(chunk)
             speech_chunks += 1
@@ -96,6 +98,7 @@ def transcribe_audio():
             pending = worker.submit(process, speech_audio())
 
         if silence_chunks >= COMMIT_AFTER or len(buffer) >= MAX_BUFFER_CHUNKS:
+            text = None
             if speech_chunks >= MIN_SPEECH_CHUNKS:
                 text, is_user, score, duration = pending.result() if pending is not None else process(speech_audio())
                 if text:
@@ -108,14 +111,18 @@ def transcribe_audio():
                         duration_s=duration,
                         speaker_score=score,
                     ))
+            if not text:
+                on_speech_dropped()  # a blip or no words: nothing will reach the router
             buffer = []
             silence_chunks = 0
             speech_chunks = 0
             in_speech = False
             pending = None
 
-def run() -> Generator[Spoken, None, None]:
-    threading.Thread(target=transcribe_audio, daemon=True).start()
+def run(on_speech_start=lambda: None, on_speech_dropped=lambda: None) -> Generator[Spoken, None, None]:
+    """Yield one Spoken event per utterance. `on_speech_start` fires the moment speech is
+    detected, `on_speech_dropped` when it turns out to be too short or wordless."""
+    threading.Thread(target=transcribe_audio, args=(on_speech_start, on_speech_dropped), daemon=True).start()
     with sd.InputStream(samplerate=16000, channels=1, dtype='float32',
                         blocksize=512, callback=callback):
         while True:

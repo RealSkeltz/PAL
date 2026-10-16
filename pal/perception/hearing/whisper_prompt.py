@@ -1,3 +1,3 @@
 WHISPER_PROMPT = (
- "Pal"
+ "Buddy"
 )

@@ -21,7 +21,7 @@ MIN_PROB = {
 
 
 def addressed_by_name(input_text):
-    return re.search(r"\bpal\b", input_text, re.IGNORECASE)
+    return re.search(r"\bbuddy\b", input_text, re.IGNORECASE)
 
 
 def within_conversation_window(last_spoke_at):
