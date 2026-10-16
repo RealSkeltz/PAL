@@ -16,9 +16,7 @@ import torch
 
 voiceprint = torch.load('/Users/jscheltema/Documents/Personal/PAL/pal/perception/audio/voice_analysis/data/voiceprint/voiceprint_me.pt')
 encoder, _ = load_encoder()
-# The checkpoint's threshold (0.864) was tuned on full-length synthetic clips. Live utterances are
-# often under a second and score lower for the same speaker (median ~0.82 at 0.5 s vs 0.99 at 3 s),
-# while another voice stayed below ~0.3 at any length, so 0.5 keeps a margin on both sides.
+
 SPEAKER_THRESHOLD = 0.5
 
 transcriber = WhisperModel("distil-small.en", device="auto", compute_type="float32", cpu_threads=4)
@@ -42,9 +40,6 @@ result_queue = queue.Queue()
 def callback(indata, frames, time, status):
     audio_queue.put(indata.copy())
 
-# Endpointing, in 32 ms chunks (blocksize=512 at 16 kHz). Speaker check + STT start speculatively
-# at a short pause; if speech resumes that result is dropped, otherwise it is usually ready by the
-# time the long pause confirms the utterance is finished.
 CHUNK_SEC = 512 / 16000
 SPECULATE_AFTER = round(0.2 / CHUNK_SEC)    # short pause: start working on what was said so far
 COMMIT_AFTER = round(0.7 / CHUNK_SEC)       # long pause: the utterance is finished
@@ -73,23 +68,23 @@ def transcribe_audio():
     silence_chunks = 0
     speech_chunks = 0
     in_speech = False
-    pending = None  # speculative result for the buffer as it was at the short pause
+    pending = None 
 
     while True:
         chunk = audio_queue.get()
 
         if contains_speech(chunk):
-            pending = None  # speech resumed: any result so far is for an unfinished sentence
+            pending = None 
             buffer.append(chunk)
             speech_chunks += 1
             silence_chunks = 0
             in_speech = True
         elif in_speech:
-            # In an utterance but currently silent: keep buffering trailing silence
+            
             buffer.append(chunk)
             silence_chunks += 1
         else:
-            continue  # pre-speech silence, drop it
+            continue 
 
         # Speech so far, without the trailing silence
         speech_audio = lambda: np.concatenate(buffer[:len(buffer) - silence_chunks]).reshape(-1)
