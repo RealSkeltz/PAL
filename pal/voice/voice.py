@@ -27,7 +27,6 @@ from pal.voice.tts import kokoro
 logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 24000  # Kokoro outputs 24kHz mono float32
-DUCK_GAIN = 0.2      # volume while the user may be interrupting
 
 
 @dataclass
@@ -39,7 +38,7 @@ class _Clip:
 
 
 class Voice:
-    def __init__(self, voice: str = "am_michael", speed: float = 1.2):
+    def __init__(self, voice: str = "bm_george", speed: float = 1.2):
         self.voice = voice
         self.speed = speed
 
@@ -53,7 +52,6 @@ class Voice:
         self._lock = threading.Lock()
         self._idle = threading.Event()
         self._idle.set()
-        self._gain = 1.0
 
         self._stream = sd.OutputStream(
             samplerate=SAMPLE_RATE, channels=1, dtype="float32",
@@ -73,17 +71,9 @@ class Voice:
         """Play a sound in line with speech, e.g. a tone between two sentences."""
         self._enqueue(samples, tag)
 
-    def duck(self):
-        """Turn down while the user might be interrupting; `unduck` or `stop` follows."""
-        self._gain = DUCK_GAIN
-
-    def unduck(self):
-        self._gain = 1.0
-
     def stop(self):
         """Cut off now and drop everything queued."""
         with self._lock:
-            self._gain = 1.0
             if self._current is not None:
                 self._heard[self._current.tag] += self._partial_words(self._current)
                 self._current = None
@@ -164,7 +154,7 @@ class Voice:
                     self._started.setdefault(self._current.tag, clock.time())
                 clip = self._current
                 n = min(frames - filled, len(clip.samples) - clip.pos)
-                out[filled:filled + n] = clip.samples[clip.pos:clip.pos + n] * self._gain
+                out[filled:filled + n] = clip.samples[clip.pos:clip.pos + n]
                 clip.pos += n
                 filled += n
                 if clip.pos >= len(clip.samples):

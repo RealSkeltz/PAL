@@ -9,6 +9,7 @@ from torch import nn
 from torch.utils.data import Dataset
 
 from pal.config import SPEAKER_MODELS
+from pal.perception.hearing.vad import speech_only
 
 # _________ Audio preprocessing ________________________
 
@@ -149,9 +150,25 @@ def same_speaker(audio_a, audio_b, model, threshold, sr=SR):
     score = torch.dot(embed(audio_a, model, sr), embed(audio_b, model, sr)).item()
     return score >= threshold, score
 
-def enroll(audios, model, sr=SR):
-    voiceprint = torch.stack([embed(a, model, sr) for a in audios]).mean(dim=0)
-    return F.normalize(voiceprint, dim=0)
+# Live checks compare short snippets of speech, so the voiceprint is built from the same:
+# silences cut out, then 1 s windows (half overlapping) averaged. Embedding whole files,
+# silence included, gave a voiceprint that recognised the user far less often.
+ENROLL_WINDOW_SEC = 1.0
+
+def enroll(audios, model, sr=SR, window_sec=ENROLL_WINDOW_SEC):
+    """Voiceprint from recordings (file paths or in-memory audio) of one speaker."""
+    n = int(window_sec * SR)
+    embeddings = []
+    for audio in audios:
+        wave = load_wave(audio) if isinstance(audio, (str, Path)) else to_wave(audio, sr)
+        speech = torch.from_numpy(speech_only(wave.numpy()))
+        if len(speech) == 0:
+            continue
+        starts = range(0, len(speech) - n + 1, n // 2) if len(speech) >= n else [0]
+        embeddings += [embed_wave(speech[i:i + n], model) for i in starts]
+    if not embeddings:
+        raise ValueError("no speech found in any of the recordings")
+    return F.normalize(torch.stack(embeddings).mean(dim=0), dim=0)
 
 def verify(voiceprint, audio, model, threshold, sr=SR):
     score = torch.dot(voiceprint, embed(audio, model, sr)).item()

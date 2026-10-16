@@ -31,7 +31,6 @@ class EventRouter:
         vision_trigger: threading.Event,
         on_user_turn: Callable[[UserTurn], None],
         last_spoke_at: Callable[[], float],
-        on_not_for_pal: Callable[[Language], None] = lambda event: None,
     ):
         self.history = history
         self.context = context
@@ -39,7 +38,6 @@ class EventRouter:
         self.vision_trigger = vision_trigger
         self.on_user_turn = on_user_turn
         self.last_spoke_at = last_spoke_at
-        self.on_not_for_pal = on_not_for_pal
 
     def run(self, events: queue.Queue):
         logger.info("started")
@@ -55,13 +53,11 @@ class EventRouter:
 
         if event.actor is not Actor.USER:
             self.context.append(event)
-            self.on_not_for_pal(event)
             return
 
         speak, look = self._assess(event)
         if not speak:
             self.context.append(event)
-            self.on_not_for_pal(event)
             return
 
         event = replace(event, role=Role.DIRECT)

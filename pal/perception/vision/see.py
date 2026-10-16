@@ -53,11 +53,7 @@ def _annotate_frame(r, closest_box):
 
     if closest_box is not None:
         x1, y1, x2, y2 = map(int, closest_box.xyxy[0].tolist())
-        label = r.names[int(closest_box.cls)]
-        conf = float(closest_box.conf)
         cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 3)
-        cv2.putText(img, f"{label} {conf:.2f}", (x1, y1 - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
     cv2.drawMarker(img, (cx, cy), (0, 0, 255), cv2.MARKER_CROSS, 20, 2)
     #cv2.imshow("detections", img)

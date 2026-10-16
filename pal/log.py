@@ -28,7 +28,8 @@ from pal.schemas.event import event_adapter
 from pal.schemas.turn import ConversationTurn
 
 # Libraries whose warnings are known noise. phonemizer (inside Kokoro) warns
-# about word-count mismatches on most sentences; the speech is fine.
+# about word-count mismatches on most sentences; the speech is fine. Filtered at
+# our handlers, because phonemizer resets its own logger's level when imported.
 QUIET_LOGGERS = ("phonemizer",)
 
 _session_file = None
@@ -71,10 +72,9 @@ def setup(verbose: bool = False) -> Path:
     root = logging.getLogger()
     root.setLevel(logging.WARNING)  # third-party libraries
     for handler in (console, file, preview):
+        handler.addFilter(_not_noise)
         root.addHandler(handler)
     logging.getLogger("pal").setLevel(logging.DEBUG)
-    for noisy in QUIET_LOGGERS:
-        logging.getLogger(noisy).setLevel(logging.ERROR)
 
     threading.excepthook = _log_thread_crash
     _session_file = open(run_dir / "session.jsonl", "a", buffering=1)
@@ -108,6 +108,10 @@ def _dump(data: Any) -> Any:
         return data
     adapter = _adapters.setdefault(type(data), TypeAdapter(type(data)))
     return adapter.dump_python(data, mode="json")
+
+
+def _not_noise(record: logging.LogRecord) -> bool:
+    return not (record.name.split(".")[0] in QUIET_LOGGERS and record.levelno < logging.ERROR)
 
 
 def _log_thread_crash(args):

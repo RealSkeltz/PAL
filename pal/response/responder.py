@@ -48,6 +48,8 @@ def respond(
 
     def say(text):
         nonlocal first_sentence
+        if cancel.is_set():
+            return  # cut off; don't start a new sentence after the voice was stopped
         first_sentence = first_sentence or time.time()
         logger.info(f"said: {text}")
         voice.say(text, tag=(reply_id, step))

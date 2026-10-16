@@ -6,10 +6,11 @@
 The router only appends user turns and wakes the responder; the responder
 answers every pending user turn at once.
 
-Barge-in: the moment the user starts speaking while Buddy talks, the voice
-ducks. If the router then turns that speech into a user turn, the reply in
-progress is cancelled (`self.cancel`) and the new turn is answered; if it
-wasn't meant for Buddy, the volume comes back and the reply carries on.
+Barge-in: as soon as the user's voice is recognised while Buddy talks (from
+about half a second of speech), Buddy stops (`self.cancel`). Other voices and
+noise don't stop it. What the user said is then routed as usual: answered if it
+was for Buddy, kept as context if not. A user turn that arrives while a reply
+is still being written, before any of it is heard, also cancels that reply.
 """
 import atexit
 import logging
@@ -81,7 +82,6 @@ class Pal:
             self.history, self.context, self.captures, self.vision_trigger,
             on_user_turn=self._on_user_turn,
             last_spoke_at=lambda: self.last_spoke_at,
-            on_not_for_pal=lambda event: self.voice.unduck(),
         )
         logger.info(f"initialized (response model {self.model}, gate model {gate_client.model})")
 
@@ -89,7 +89,7 @@ class Pal:
         """Start the agent. `detect` toggles YOLO object detection on the camera."""
         self.detect = detect
         self.voice.start()
-        _thread(self._feed, self._text_input() if text_mode else listen.run(on_speech_start=self._on_speech_start, on_speech_dropped=self.voice.unduck))
+        _thread(self._feed, self._text_input() if text_mode else listen.run(on_user_speaking=self._on_user_speaking))
         _thread(self._feed_captures, see.run(self.vision_trigger, detect=self.detect))
         _thread(self.router.run, self.events)
         _thread(self._respond_loop)
@@ -138,9 +138,11 @@ class Pal:
             self.captures.put(observation)
             logger.info(f"captured {label} ({conf:.2f})")
 
-    def _on_speech_start(self):
+    def _on_user_speaking(self):
         if self.voice.busy:
-            self.voice.duck()
+            logger.info("barge-in: user started speaking, stopping")
+            self.cancel.set()
+            self.voice.stop()
 
     def _on_user_turn(self, turn: UserTurn):
         if self._responding:
