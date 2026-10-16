@@ -8,6 +8,7 @@ answers every pending user turn at once, so speech that arrives while PAL is
 talking is answered next instead of dropped. `self.cancel` cuts off the reply
 in progress; barge-in will set it.
 """
+import atexit
 import logging
 import queue
 import threading
@@ -23,6 +24,7 @@ from pal.perception.hearing import listen
 from pal.perception.vision import see
 from pal.response.responder import respond
 from pal.routing.router import EventRouter
+from pal.routing.system_one import client as gate_client
 from pal.log import record
 from pal.schemas.event import Actor, Event, Observation, Role, Written
 from pal.schemas.turn import ConversationTurn, Response, UserTurn
@@ -74,7 +76,7 @@ class Pal(ABC):
             on_user_turn=self._on_user_turn,
             last_spoke_at=lambda: self.last_spoke_at,
         )
-        logger.info("initialized")
+        logger.info(f"initialized (response model {model}, gate model {gate_client.model})")
 
     def run(self, text_mode: bool = False, detect: bool = True):
         """Start the agent. `detect` toggles YOLO object detection on the camera."""
@@ -84,7 +86,27 @@ class Pal(ABC):
         _thread(self._feed_captures, see.run(self.vision_trigger, detect=self.detect))
         _thread(self.router.run, self.events)
         _thread(self._respond_loop)
+        _thread(self._warm_up)
+        atexit.register(self._release)
         logger.info("all threads started")
+
+    def _warm_up(self):
+        for name, client in (("gate", gate_client), ("response", self.client)):
+            start = time.time()
+            try:
+                loaded = client.warm_up()
+            except Exception:
+                logger.exception(f"loading the {name} model failed")
+                continue
+            if loaded:
+                logger.info(f"{name} model ready ({time.time() - start:.1f}s)")
+
+    def _release(self):
+        for client in (gate_client, self.client):
+            try:
+                client.release()
+            except Exception:
+                pass
 
     # --- Stages --------------------------------------------------------------
 

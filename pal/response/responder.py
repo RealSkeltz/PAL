@@ -43,7 +43,12 @@ def respond(
     recorded: list[tuple[int, PalTurn]] = []
     step, partial = 0, ""          # partial: this step's text so far, for a cut-off generation
 
+    start = time.time()
+    first_text = first_sentence = None
+
     def say(text):
+        nonlocal first_sentence
+        first_sentence = first_sentence or time.time()
         logger.info(f"said: {text}")
         voice.say(text, tag=(reply_id, step))
 
@@ -54,6 +59,7 @@ def respond(
     try:
         for event in run_turn(history, system_prompt, client, tools, cancel):
             if isinstance(event, TextChunk):
+                first_text = first_text or time.time()
                 partial += event.text
                 for sentence in sentences.feed(event.text):
                     say(sentence)
@@ -97,22 +103,58 @@ def respond(
     for turn in user_turns:
         turn.response = status
         record("turn", turn)
+    _log_timing(start, user_turns, first_text, first_sentence,
+                [voice.started_at((reply_id, s)) for s in range(step + 1)])
     for _, turn in recorded:
         record("turn", turn)
 
 
+def _log_timing(start, user_turns, first_text, first_sentence, audio_starts):
+    """One line per reply: where the time between hearing and speaking went."""
+    since = lambda t: f"{t - start:.2f}s" if t else "-"
+    first_audio = min((t for t in audio_starts if t), default=None)
+    waited = start - user_turns[-1].utterance.at.timestamp()
+    logger.info(f"timing: waited {waited:.2f}s, first text {since(first_text)}, first sentence {since(first_sentence)}, "
+                f"first audio {since(first_audio)}, done {since(time.time())}")
+
+
 class SentenceBuffer:
-    """Collects streamed text and hands back whole sentences."""
+    """Collects streamed text and hands back whole sentences.
+
+    The first piece of a reply goes out at the first clause break instead, so
+    the voice can start sooner: synthesis time grows with length, and waiting
+    for the end of a long first sentence delays everything.
+    """
+
+    MIN_FIRST_CLAUSE_WORDS = 3
 
     def __init__(self):
         self.text = ""
+        self.first = True
 
     def feed(self, text: str) -> list[str]:
         self.text += text
+        if self.first:
+            clause = self._first_clause()
+            if clause:
+                return [clause]
         # Cut after the last sentence end that is followed by a space (or is the end so far).
         cut = max((m.end() for m in re.finditer(r"[.!?\n]+(\s|$)", self.text)), default=0)
         done, self.text = self.text[:cut], self.text[cut:]
+        if done.strip():
+            self.first = False
         return _sentences(done)
+
+    def _first_clause(self) -> str | None:
+        for m in re.finditer(r"[,;:](?=\s)", self.text):
+            clause = self.text[:m.end()]
+            if re.search(r"[.!?\n]", clause):
+                return None  # a whole sentence came first; let the normal path take it
+            if len(clause.split()) >= self.MIN_FIRST_CLAUSE_WORDS:
+                self.text = self.text[m.end():]
+                self.first = False
+                return clause.strip()
+        return None
 
     def flush(self) -> list[str]:
         done, self.text = self.text, ""

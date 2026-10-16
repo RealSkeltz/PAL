@@ -11,6 +11,7 @@ from typing import Generator
 from pal.config import VISION_MODELS
 
 from pal.debug.preview import preview
+from pal.debug.quiet import suppress_stderr
 
 logger = logging.getLogger(__name__)
 
@@ -135,18 +136,3 @@ def run(trigger: threading.Event, detect: bool = True) -> Generator[tuple[np.nda
                 yield capture
 
         cv2.waitKey(DELAY)
-
-
-# Warning wrapper
-import contextlib
-
-@contextlib.contextmanager
-def suppress_stderr():
-    with open(os.devnull, 'w') as devnull:
-        old_stderr = os.dup(2)
-        os.dup2(devnull.fileno(), 2)
-        try:
-            yield
-        finally:
-            os.dup2(old_stderr, 2)
-            os.close(old_stderr)

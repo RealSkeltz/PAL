@@ -1,4 +1,9 @@
-"""Local models served by ollama."""
+"""Local models served by ollama.
+
+Ollama unloads a model after 5 idle minutes and the next request then waits
+seconds for it to load again, so PAL keeps its models loaded for as long as it
+runs (keep_alive=-1) and releases them on exit.
+"""
 from uuid import uuid4
 
 import ollama
@@ -10,6 +15,13 @@ class OllamaClient(LLMClient):
     def __init__(self, model: str, think: bool = False):
         self.model = model
         self.think = think
+
+    def warm_up(self) -> bool:
+        ollama.generate(model=self.model, keep_alive=-1)
+        return True
+
+    def release(self):
+        ollama.generate(model=self.model, keep_alive=0)
 
     def stream(self, system, conversation, tools=None):
         messages = []
@@ -23,6 +35,7 @@ class OllamaClient(LLMClient):
             tools=[_encode_tool(t) for t in (tools or [])],
             think=self.think,
             stream=True,
+            keep_alive=-1,
         )
 
         text = ""

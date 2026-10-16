@@ -13,6 +13,7 @@ barge-in needs to record where PAL was interrupted.
 import logging
 import queue
 import threading
+import time as clock
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Hashable
@@ -45,6 +46,7 @@ class Voice:
         self._clips: deque[_Clip] = deque()       # synthesized, waiting to play
         self._current: _Clip | None = None        # playing now
         self._heard: defaultdict[Hashable, int] = defaultdict(int)
+        self._started: dict[Hashable, float] = {}  # tag -> when its first audio played
         self._pending = 0                         # items accepted but not finished playing
         self._epoch = 0                           # bumped by stop(); older items are dropped
         self._lock = threading.Lock()
@@ -87,6 +89,10 @@ class Voice:
                 n += self._partial_words(self._current)
             return n
 
+    def started_at(self, tag: Hashable) -> float | None:
+        """When audio with this tag first reached the sound card."""
+        return self._started.get(tag)
+
     @property
     def busy(self) -> bool:
         return not self._idle.is_set()
@@ -108,6 +114,9 @@ class Voice:
         self._inbox.put((epoch, item, tag))
 
     def _synthesize(self):
+        # The first synthesis is about twice as slow as later ones; pay that now, not on the first reply.
+        with timed("tts warm-up"):
+            kokoro.create("Ready.", voice=self.voice, speed=self.speed)
         while True:
             epoch, item, tag = self._inbox.get()
             if epoch != self._epoch:
@@ -142,6 +151,7 @@ class Voice:
                     if not self._clips:
                         break
                     self._current = self._clips.popleft()
+                    self._started.setdefault(self._current.tag, clock.time())
                 clip = self._current
                 n = min(frames - filled, len(clip.samples) - clip.pos)
                 out[filled:filled + n] = clip.samples[clip.pos:clip.pos + n]

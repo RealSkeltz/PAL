@@ -27,6 +27,10 @@ from pal.config import LOGS_DIR
 from pal.schemas.event import event_adapter
 from pal.schemas.turn import ConversationTurn
 
+# Libraries whose warnings are known noise. phonemizer (inside Kokoro) warns
+# about word-count mismatches on most sentences; the speech is fine.
+QUIET_LOGGERS = ("phonemizer",)
+
 _session_file = None
 _session_lock = threading.Lock()
 _adapters: dict[type, TypeAdapter] = {}
@@ -70,6 +74,8 @@ def setup(verbose: bool = False) -> Path:
         root.addHandler(handler)
     for ours in ("pal", "agents"):
         logging.getLogger(ours).setLevel(logging.DEBUG)
+    for noisy in QUIET_LOGGERS:
+        logging.getLogger(noisy).setLevel(logging.ERROR)
 
     threading.excepthook = _log_thread_crash
     _session_file = open(run_dir / "session.jsonl", "a", buffering=1)

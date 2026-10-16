@@ -45,7 +45,7 @@ def callback(indata, frames, time, status):
 
 CHUNK_SEC = 512 / 16000
 SPECULATE_AFTER = round(0.2 / CHUNK_SEC)    # short pause: start working on what was said so far
-COMMIT_AFTER = round(0.7 / CHUNK_SEC)       # long pause: the utterance is finished
+COMMIT_AFTER = round(0.5 / CHUNK_SEC)       # long pause: the utterance is finished
 MIN_SPEECH_CHUNKS = round(0.3 / CHUNK_SEC)  # less speech than this is a blip, not an utterance
 MAX_BUFFER_CHUNKS = round(20 / CHUNK_SEC)   # safety cap for one utterance
 

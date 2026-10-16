@@ -63,6 +63,13 @@ class LLMClient(ABC):
     ) -> Iterator[TextDelta | Completed]:
         """Yield TextDelta as text arrives, then exactly one Completed at the end."""
 
+    def warm_up(self) -> bool:
+        """Load the model now so the first request isn't slow. True if there was anything to load."""
+        return False
+
+    def release(self):
+        """Free the model's memory. Only local backends need this."""
+
     def complete(
         self,
         system: str | None,
