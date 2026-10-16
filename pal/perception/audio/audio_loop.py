@@ -2,6 +2,7 @@ import sounddevice as sd
 import numpy as np
 import threading
 import queue
+from concurrent.futures import ThreadPoolExecutor
 from faster_whisper import WhisperModel
 from typing import Generator
 from pal.types import Message
@@ -20,7 +21,17 @@ encoder, _ = load_encoder()
 # while another voice stayed below ~0.3 at any length, so 0.5 keeps a margin on both sides.
 SPEAKER_THRESHOLD = 0.5
 
-model = WhisperModel("distil-small.en", device="auto", compute_type="float32", cpu_threads=4)
+transcriber = WhisperModel("distil-small.en", device="auto", compute_type="float32", cpu_threads=4)
+
+from silero_vad import load_silero_vad
+vad = load_silero_vad()
+SPEECH_PROB = 0.5
+
+@torch.inference_mode()
+def contains_speech(chunk, sr=16000) -> bool:
+    """chunk: 512 samples of 16 kHz mono float32 (shape (512,) or (512, 1))"""
+    wave = torch.from_numpy(chunk.reshape(-1))
+    return vad(wave, sr).item() >= SPEECH_PROB
 
 audio_queue = queue.Queue()
 transcript = {}  # chunk_id -> text
@@ -31,74 +42,78 @@ result_queue = queue.Queue()
 def callback(indata, frames, time, status):
     audio_queue.put(indata.copy())
 
+# Endpointing, in 32 ms chunks (blocksize=512 at 16 kHz). Speaker check + STT start speculatively
+# at a short pause; if speech resumes that result is dropped, otherwise it is usually ready by the
+# time the long pause confirms the utterance is finished.
+CHUNK_SEC = 512 / 16000
+SPECULATE_AFTER = round(0.2 / CHUNK_SEC)    # short pause: start working on what was said so far
+COMMIT_AFTER = round(0.7 / CHUNK_SEC)       # long pause: the utterance is finished
+MIN_SPEECH_CHUNKS = round(0.3 / CHUNK_SEC)  # less speech than this is a blip, not an utterance
+MAX_BUFFER_CHUNKS = round(20 / CHUNK_SEC)   # safety cap for one utterance
+
+worker = ThreadPoolExecutor(max_workers=1)  # one Whisper run at a time
+
+def process(audio):
+    is_user, score = verify(voiceprint, audio, encoder, SPEAKER_THRESHOLD)
+    print(f"[Speaker]  score {score:.2f} ({len(audio) / 16000:.1f}s) -> {'user' if is_user else 'other'}")
+
+    with timed("STT"):
+        segments, info = transcriber.transcribe(
+            audio,
+            language='en',
+            condition_on_previous_text=True,
+            initial_prompt=WHISPER_PROMPT,
+        )
+        text = " ".join(s.text for s in segments).strip()
+    return text, is_user
+
 def transcribe_audio():
     global chunk_id
     buffer = []
     silence_chunks = 0
     speech_chunks = 0
-    
-    # Tunables (chunks of 0.1s each at blocksize=1600, sr=16000)
-    SILENCE_TO_FLUSH = 7      # 0.8s of silence ends an utterance
-    MIN_SPEECH_CHUNKS = 3      # require ~0.3s of speech before considering flush
-    MAX_BUFFER_CHUNKS = 200    # 20s safety cap to prevent runaway buffer
-    RMS_THRESHOLD = 0.01
-    
     in_speech = False
-    
+    pending = None  # speculative result for the buffer as it was at the short pause
+
     while True:
         chunk = audio_queue.get()
-        rms = np.sqrt(np.mean(chunk**2))
-        is_speech = rms >= RMS_THRESHOLD
-        
-        if is_speech:
+
+        if contains_speech(chunk):
+            pending = None  # speech resumed: any result so far is for an unfinished sentence
             buffer.append(chunk)
             speech_chunks += 1
             silence_chunks = 0
             in_speech = True
         elif in_speech:
-            # In an utterance but currently silent — keep buffering trailing silence
+            # In an utterance but currently silent: keep buffering trailing silence
             buffer.append(chunk)
             silence_chunks += 1
-        # else: pre-speech silence, drop it
-        
-        # Flush when we've had enough silence after speech, or buffer is huge
-        should_flush = (
-            in_speech and silence_chunks >= SILENCE_TO_FLUSH and speech_chunks >= MIN_SPEECH_CHUNKS
-        ) or len(buffer) >= MAX_BUFFER_CHUNKS
-        
-        if should_flush:
-            audio = np.concatenate(buffer).squeeze().astype(np.float32)
+        else:
+            continue  # pre-speech silence, drop it
+
+        # Speech so far, without the trailing silence
+        speech_audio = lambda: np.concatenate(buffer[:len(buffer) - silence_chunks]).reshape(-1)
+
+        if silence_chunks == SPECULATE_AFTER and speech_chunks >= MIN_SPEECH_CHUNKS:
+            pending = worker.submit(process, speech_audio())
+
+        if silence_chunks >= COMMIT_AFTER or len(buffer) >= MAX_BUFFER_CHUNKS:
+            if speech_chunks >= MIN_SPEECH_CHUNKS:
+                text, is_user = pending.result() if pending is not None else process(speech_audio())
+                if text:
+                    transcript[chunk_id] = text
+                    chunk_id += 1
+                    result_queue.put((text, is_user))
             buffer = []
             silence_chunks = 0
             speech_chunks = 0
             in_speech = False
-            
-            if len(audio) < 4000:
-                continue
-
-            is_user, score = verify(voiceprint, audio, encoder, SPEAKER_THRESHOLD)
-            print(f"[Speaker]  score {score:.2f} ({len(audio) / 16000:.1f}s) -> {'user' if is_user else 'other'}")
-
-            with timed("STT"):
-                segments, info = model.transcribe(
-                    audio,
-                    vad_filter=False,
-                    vad_parameters=dict(min_silence_duration_ms=500, threshold=0.5),
-                    language='en',
-                    condition_on_previous_text=True,
-                    initial_prompt=WHISPER_PROMPT,
-                )
-                text = " ".join(s.text for s in segments).strip()
-            if text:
-                transcript[chunk_id] = text
-                chunk_id += 1
-                message = (text, is_user)
-                result_queue.put(message)
+            pending = None
 
 def run() -> Generator[InputObject, None, None]:
     threading.Thread(target=transcribe_audio, daemon=True).start()
     with sd.InputStream(samplerate=16000, channels=1, dtype='float32',
-                        blocksize=1600, callback=callback):
+                        blocksize=512, callback=callback):
         while True:
             text, is_user = result_queue.get()  # one get per utterance, text and speaker check belong together
             yield InputObject(type="audio", content=text, is_user=is_user)
