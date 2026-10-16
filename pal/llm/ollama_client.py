@@ -23,6 +23,12 @@ class OllamaClient(LLMClient):
     def release(self):
         ollama.generate(model=self.model, keep_alive=0)
 
+    def parse(self, system, conversation, output):
+        messages = ([{"role": "system", "content": system}] if system else []) + [_encode_turn(t) for t in conversation]
+        response = ollama.chat(model=self.model, messages=messages, format=output.model_json_schema(),
+                               think=self.think, keep_alive=-1)
+        return output.model_validate_json(response["message"]["content"])
+
     def stream(self, system, conversation, tools=None):
         messages = []
         if system:

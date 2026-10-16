@@ -6,7 +6,11 @@ whether it is talking to a local ollama model or the Claude API.
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Iterator
+from typing import Iterator, TypeVar
+
+from pydantic import BaseModel
+
+T = TypeVar("T", bound=BaseModel)
 
 
 @dataclass
@@ -62,6 +66,10 @@ class LLMClient(ABC):
         tools: list[ToolSpec] | None = None,
     ) -> Iterator[TextDelta | Completed]:
         """Yield TextDelta as text arrives, then exactly one Completed at the end."""
+
+    def parse(self, system: str | None, conversation: list[Turn], output: type[T]) -> T:
+        """One reply, constrained to the shape of `output` and returned as an instance of it."""
+        raise NotImplementedError(f"{type(self).__name__} has no structured output")
 
     def warm_up(self) -> bool:
         """Load the model now so the first request isn't slow. True if there was anything to load."""

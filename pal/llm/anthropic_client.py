@@ -46,6 +46,21 @@ class AnthropicClient(LLMClient):
         # `ant auth login` profile — nothing to pass here.
         return _sdk().Anthropic()
 
+    def parse(self, system, conversation, output):
+        request = {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "messages": _encode_conversation(conversation),
+            "output_config": {"effort": self.effort},
+            "output_format": output,  # the SDK merges this into output_config as a JSON schema
+        }
+        if system:
+            request["system"] = system
+        response = self._client.messages.parse(**request)
+        if response.stop_reason == "refusal":
+            raise RuntimeError(f"{self.model} declined to answer")
+        return response.parsed_output
+
     def stream(self, system, conversation, tools=None):
         request = {
             "model": self.model,

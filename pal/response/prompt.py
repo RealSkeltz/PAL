@@ -14,6 +14,11 @@ def _read(context_dir: Path, name: str) -> str:
     return path.read_text().strip()
 
 
+def about_user(context_dir: Path = PROMPT_DIR) -> str:
+    """Who the user is, for anything that needs to recognise them (e.g. by name)."""
+    return _read(context_dir, "user_preferences.md")
+
+
 def build_system_prompt(context_dir: Path = PROMPT_DIR) -> str:
     base = _read(context_dir, "base_prompt.md")
     user_prefs = _read(context_dir, "user_preferences.md")

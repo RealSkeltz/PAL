@@ -57,7 +57,7 @@ class Pal:
         self.client = get_client(self.model)
 
         # State
-        self.memory = Memory()
+        self.memory = Memory(self.client)
         self.last_image = None  # read by the save_last_image tool
         self.last_spoke_at = 0.0
 
@@ -94,6 +94,7 @@ class Pal:
         _thread(self.router.run, self.events)
         _thread(self._respond_loop)
         _thread(self._warm_up)
+        _thread(self.memory.watch, lambda: self._responding or self.voice.busy)
         atexit.register(self._release)
         logger.info("all threads started")
 
