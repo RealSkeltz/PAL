@@ -10,10 +10,10 @@ in progress; barge-in will set it.
 """
 import atexit
 import logging
+import os
 import queue
 import threading
 import time
-from abc import ABC
 from uuid import uuid4
 
 import cv2
@@ -22,6 +22,7 @@ from pal.llm import get_client
 from pal.config import CAPTURES_DIR
 from pal.perception.hearing import listen
 from pal.perception.vision import see
+from pal.response.prompt import build_system_prompt
 from pal.response.responder import respond
 from pal.routing.router import EventRouter
 from pal.routing.system_one import client as gate_client
@@ -39,15 +40,16 @@ def _thread(target, *args):
     threading.Thread(target=target, args=args, daemon=True).start()
 
 
-class Pal(ABC):
-    # Subclasses override with their own ToolHandler to add agent-specific tools.
-    tool_handler_cls = BuiltinTools
+# Override per run, e.g. PAL_MODEL=foundry:claude-haiku-5-5 python main.py
+DEFAULT_MODEL = "ollama:qwen3.5:9b"
 
-    def __init__(self, system_prompt: str, model: str):
-        # Identity: `model` is a "provider:name" spec, e.g. "ollama:qwen3.5:9b"
-        self.system_prompt = system_prompt
-        self.model = model
-        self.client = get_client(model)
+
+class Pal:
+    def __init__(self, system_prompt: str | None = None, model: str | None = None):
+        # `model` is a "provider:name" spec, e.g. "ollama:qwen3.5:9b"
+        self.system_prompt = system_prompt or build_system_prompt()
+        self.model = model or os.environ.get("PAL_MODEL", DEFAULT_MODEL)
+        self.client = get_client(self.model)
 
         # State
         self.history: list[ConversationTurn] = []
@@ -70,13 +72,13 @@ class Pal(ABC):
         self.vision_trigger = threading.Event()
         self.detect = False  # YOLO on by default; run(detect=False) turns it off
 
-        self.tool_handler = self.tool_handler_cls(self)
+        self.tool_handler = BuiltinTools(self)
         self.router = EventRouter(
             self.history, self.context, self.captures, self.vision_trigger,
             on_user_turn=self._on_user_turn,
             last_spoke_at=lambda: self.last_spoke_at,
         )
-        logger.info(f"initialized (response model {model}, gate model {gate_client.model})")
+        logger.info(f"initialized (response model {self.model}, gate model {gate_client.model})")
 
     def run(self, text_mode: bool = False, detect: bool = True):
         """Start the agent. `detect` toggles YOLO object detection on the camera."""

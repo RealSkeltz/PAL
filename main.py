@@ -23,15 +23,15 @@ def main():
     setup(verbose=args.verbose)
 
     # Imports after argparse so any module-level setup can react to flags.
-    from agents.scout import Scout
+    from pal.agent import Pal
 
     if args.preview:
         from pal.debug.preview import preview
         preview.start(port=args.preview_port)
         webbrowser.open(f"http://127.0.0.1:{args.preview_port}")
 
-    scout = Scout()
-    scout.run(text_mode=args.text, detect=not args.no_yolo)
+    pal = Pal()
+    pal.run(text_mode=args.text, detect=not args.no_yolo)
     try:
         threading.Event().wait()  # keep main thread alive
     except KeyboardInterrupt:

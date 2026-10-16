@@ -72,8 +72,7 @@ def setup(verbose: bool = False) -> Path:
     root.setLevel(logging.WARNING)  # third-party libraries
     for handler in (console, file, preview):
         root.addHandler(handler)
-    for ours in ("pal", "agents"):
-        logging.getLogger(ours).setLevel(logging.DEBUG)
+    logging.getLogger("pal").setLevel(logging.DEBUG)
     for noisy in QUIET_LOGGERS:
         logging.getLogger(noisy).setLevel(logging.ERROR)
 

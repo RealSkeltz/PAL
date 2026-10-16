@@ -1,9 +1,10 @@
-"""Assemble an agent's system prompt from its context directory.
+"""Assemble PAL's system prompt from the markdown fragments in system_prompt/.
 
-Each agent owns a `context/` folder of markdown fragments; this stitches the
-ones that exist into a single prompt.
+The fragments that exist are stitched into a single prompt.
 """
 from pathlib import Path
+
+PROMPT_DIR = Path(__file__).parent / "system_prompt"
 
 
 def _read(context_dir: Path, name: str) -> str:
@@ -13,7 +14,7 @@ def _read(context_dir: Path, name: str) -> str:
     return path.read_text().strip()
 
 
-def build_system_prompt(context_dir: Path) -> str:
+def build_system_prompt(context_dir: Path = PROMPT_DIR) -> str:
     base = _read(context_dir, "base_prompt.md")
     user_prefs = _read(context_dir, "user_preferences.md")
     domain = _read(context_dir, "domain_knowledge.md")
