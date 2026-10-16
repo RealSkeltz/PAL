@@ -1,5 +1,6 @@
 """Tools every Pal gets: notes, timers, saving the last captured frame."""
 import json
+import logging
 import time
 import threading
 
@@ -7,6 +8,8 @@ import cv2
 
 from pal.config import NOTES_FILE, SAVED_IMAGES_DIR
 from pal.tools.base import ToolHandler, tool
+
+logger = logging.getLogger(__name__)
 
 
 class BuiltinTools(ToolHandler):
@@ -60,7 +63,7 @@ class BuiltinTools(ToolHandler):
     def set_timer(self, seconds: int, label: str = "timer") -> str:
         def fire():
             time.sleep(seconds)
-            print(f"[Timer] {label} done!")
+            logger.info(f"timer done: {label}")
             # Could also queue a system message into the conversation
 
         threading.Thread(target=fire, daemon=True).start()

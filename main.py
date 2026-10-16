@@ -10,7 +10,12 @@ def main():
                         help="Read from stdin instead of mic (no STT)")
     parser.add_argument("--no-yolo", action="store_true",
                         help="Skip object detection; send the whole frame to the vision model")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Show debug lines (timings) in the terminal too; the log file always has them")
     args = parser.parse_args()
+
+    from pal.log import setup
+    setup(verbose=args.verbose)
 
     # Imports after argparse so any module-level setup can react to flags.
     from agents.scout import Scout

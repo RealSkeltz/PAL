@@ -1,5 +1,8 @@
+import logging
 import time
 from contextlib import contextmanager
+
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -9,4 +12,4 @@ def timed(label: str):
         yield
     finally:
         elapsed_ms = (time.time() - t0) * 1000
-        print(f"[Timing]   {label}: {elapsed_ms:.0f}ms")
+        logger.debug(f"{label}: {elapsed_ms:.0f}ms")

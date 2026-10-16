@@ -1,3 +1,4 @@
+import logging
 import os
 import threading
 
@@ -10,6 +11,8 @@ from typing import Generator
 from pal.config import VISION_MODELS
 
 from pal.debug.preview import preview
+
+logger = logging.getLogger(__name__)
 
 TARGET_FPS = 5
 DELAY = int(1000 / TARGET_FPS)
@@ -99,7 +102,7 @@ def run(trigger: threading.Event, detect: bool = True) -> Generator[tuple[np.nda
     with suppress_stderr():
         cap = cv2.VideoCapture(0)
 
-    print(f"[Vision] Capture loop started (detector {'on' if detect else 'off'})")
+    logger.info(f"capture loop started (detector {'on' if detect else 'off'})")
 
     while True:
         ret, frame = cap.read()
@@ -115,14 +118,14 @@ def run(trigger: threading.Event, detect: bool = True) -> Generator[tuple[np.nda
         if trigger.is_set():
             capture = None
             if not detect:
-                print("[Vision] Trigger fired, capturing full frame")
+                logger.info("trigger fired, capturing full frame")
                 capture = (downscale(frame), "scene", 1.0)
             elif closest_box is None:
-                print("[Vision] Trigger fired but no object detected")
+                logger.info("trigger fired but no object detected")
             else:
                 label = r.names[int(closest_box.cls)]
                 conf = float(closest_box.conf)
-                print(f"[Vision] Trigger fired, capturing: {label} ({conf:.2f})")
+                logger.debug(f"trigger fired, capturing: {label} ({conf:.2f})")
                 capture = extract_crop(r, closest_box)
 
             # Release the trigger before yielding — the capture already happened,

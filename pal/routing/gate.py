@@ -1,6 +1,5 @@
 import re
 import time
-from pal.log import logger
 
 from pal.routing.system_one import Decision, get_should_answer_noul, heard
 from pal.schemas.turn import ConversationTurn, PalTurn

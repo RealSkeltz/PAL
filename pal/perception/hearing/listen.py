@@ -1,3 +1,4 @@
+import logging
 import sounddevice as sd
 import numpy as np
 import threading
@@ -10,6 +11,8 @@ from pal.schemas.event import Actor, Role, Spoken
 from pal.perception.hearing.whisper_prompt import WHISPER_PROMPT
 
 from pal.debug.timing import timed
+
+logger = logging.getLogger(__name__)
 
 from pal.perception.hearing.speaker_encoder import verify, load_encoder
 import torch
@@ -50,7 +53,7 @@ worker = ThreadPoolExecutor(max_workers=1)  # one Whisper run at a time
 
 def process(audio):
     is_user, score = verify(voiceprint, audio, encoder, SPEAKER_THRESHOLD)
-    print(f"[Speaker]  score {score:.2f} ({len(audio) / 16000:.1f}s) -> {'user' if is_user else 'other'}")
+    logger.info(f"speaker score {score:.2f} ({len(audio) / 16000:.1f}s) -> {'user' if is_user else 'other'}")
 
     with timed("STT"):
         segments, info = transcriber.transcribe(

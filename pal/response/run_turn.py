@@ -5,16 +5,18 @@ speak, play sounds, or write to the history; it yields what happened and the
 caller decides what to do with it. A step is one model response: text,
 possibly followed by tool calls whose results feed the next step.
 """
+import logging
 import threading
 from dataclasses import dataclass, field, replace
 from typing import Iterator
 
 from pal.response.client_turns import to_client_turns
 from pal.llm.base import Completed, LLMClient, Turn
-from pal.log import logger
 from pal.schemas.event import Action, Actor, Role
 from pal.schemas.turn import ConversationTurn
 from pal.tools.base import ToolHandler
+
+logger = logging.getLogger(__name__)
 
 MAX_STEPS = 5
 
@@ -90,4 +92,4 @@ def run_turn(
         if not result.tool_calls:
             return
 
-    logger.warning(f"run_turn hit max_steps ({max_steps})")
+    logger.warning(f"hit max_steps ({max_steps})")

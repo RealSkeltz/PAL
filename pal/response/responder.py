@@ -5,22 +5,23 @@ to know what was heard to mark each PalTurn done or cancelled. Everything
 else is a sink, a callable that takes an AgentEvent and ignores the kinds it
 doesn't care about, so adding or swapping an output never touches the agent.
 """
+import logging
 import re
 import threading
 import time
-import traceback
 from typing import Callable
 from uuid import uuid4
 
 from pal.response.run_turn import AgentEvent, StepDone, TextChunk, ToolFinished, ToolStarted, run_turn
 from pal.llm.base import LLMClient
-from pal.debug.preview import preview
-from pal.log import logger
+from pal.log import record
 from pal.schemas.event import Actor, Role, Spoken
 from pal.schemas.turn import ConversationTurn, Delivery, PalTurn, Response, UserTurn
 from pal.tools.base import ToolHandler
 from pal.voice.sounds import tool_tone
 from pal.voice.voice import Voice
+
+logger = logging.getLogger(__name__)
 
 Sink = Callable[[AgentEvent], None]
 
@@ -43,8 +44,7 @@ def respond(
     step, partial = 0, ""          # partial: this step's text so far, for a cut-off generation
 
     def say(text):
-        logger.info(f"[PAL]      {text}")
-        preview.add_event("scout_speech", {"text": text})
+        logger.info(f"said: {text}")
         voice.say(text, tag=(reply_id, step))
 
     for turn in user_turns:
@@ -73,7 +73,7 @@ def respond(
                 step, partial = step + 1, ""
         voice.wait(cancel)
     except Exception:
-        logger.error("turn failed:\n" + traceback.format_exc())
+        logger.exception("turn failed")
         status = Response.FAILED
         voice.wait(cancel)
 
@@ -96,6 +96,9 @@ def respond(
 
     for turn in user_turns:
         turn.response = status
+        record("turn", turn)
+    for _, turn in recorded:
+        record("turn", turn)
 
 
 class SentenceBuffer:
@@ -124,7 +127,7 @@ def _sentences(text: str) -> list[str]:
 # --- Sinks -------------------------------------------------------------------
 
 def default_sinks(voice: Voice) -> list[Sink]:
-    return [tool_sound(voice), log_tools(), preview_tools]
+    return [tool_sound(voice), log_tools()]
 
 
 def tool_sound(voice: Voice) -> Sink:
@@ -140,18 +143,11 @@ def log_tools() -> Sink:
     def sink(event: AgentEvent):
         if isinstance(event, ToolStarted):
             started[event.action.id] = time.time()
-            logger.info(f"[Tool]     {event.action.tool}({event.action.args})")
+            logger.info(f"tool: {event.action.tool}({event.action.args})")
         elif isinstance(event, ToolFinished):
             elapsed_ms = (time.time() - started.pop(event.action.id)) * 1000
-            logger.info(f"[Tool]     -> {event.action.result[:100]} ({elapsed_ms:.0f}ms)")
+            logger.info(f"tool: {event.action.tool} -> {event.action.result[:100]} ({elapsed_ms:.0f}ms)")
         elif isinstance(event, StepDone) and event.refused:
-            logger.info("[PAL]      declined the request")
+            logger.info("declined the request")
 
     return sink
-
-
-def preview_tools(event: AgentEvent):
-    if isinstance(event, ToolStarted):
-        preview.add_event("tool_call", {"name": event.action.tool, "args": event.action.args})
-    elif isinstance(event, ToolFinished):
-        preview.add_event("tool_result", {"name": event.action.tool, "result": event.action.result[:300]})

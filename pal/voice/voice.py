@@ -10,6 +10,7 @@ have played, estimated within a sentence by how far into its audio playback
 got. `stop()` cuts off immediately and freezes those counts, which is what a
 barge-in needs to record where PAL was interrupted.
 """
+import logging
 import queue
 import threading
 from collections import defaultdict, deque
@@ -19,9 +20,10 @@ from typing import Hashable
 import numpy as np
 import sounddevice as sd
 
-from pal.log import logger
 from pal.debug.timing import timed
 from pal.voice.tts import kokoro
+
+logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 24000  # Kokoro outputs 24kHz mono float32
 
@@ -119,7 +121,7 @@ class Voice:
                     samples, words = item, 0
                 clip = _Clip(np.asarray(samples, dtype=np.float32).reshape(-1), tag, words)
             except Exception:
-                logger.exception("voice: synthesis failed")
+                logger.exception("synthesis failed")
                 clip = None
 
             with self._lock:

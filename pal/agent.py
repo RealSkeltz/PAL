@@ -8,6 +8,7 @@ answers every pending user turn at once, so speech that arrives while PAL is
 talking is answered next instead of dropped. `self.cancel` cuts off the reply
 in progress; barge-in will set it.
 """
+import logging
 import queue
 import threading
 import time
@@ -22,12 +23,14 @@ from pal.perception.hearing import listen
 from pal.perception.vision import see
 from pal.response.responder import respond
 from pal.routing.router import EventRouter
-from pal.log import logger
+from pal.log import record
 from pal.schemas.event import Actor, Event, Observation, Role, Written
 from pal.schemas.turn import ConversationTurn, Response, UserTurn
 from pal.tools.builtin import BuiltinTools
 from pal.voice.sounds import capture_tone
 from pal.voice.voice import Voice
+
+logger = logging.getLogger(__name__)
 
 
 def _thread(target, *args):
@@ -55,8 +58,7 @@ class Pal(ABC):
         self.captures: queue.Queue = queue.Queue()
         self.voice = Voice()
         self.cancel = threading.Event()
-        # Set while nothing is pending or being said; text mode waits on it
-        # so the prompt only appears once PAL's reply is done.
+
         self.idle = threading.Event()
         self.idle.set()
         self._wake = threading.Event()
@@ -64,7 +66,7 @@ class Pal(ABC):
 
         # Controls
         self.vision_trigger = threading.Event()
-        self.detect = True  # YOLO on by default; run(detect=False) turns it off
+        self.detect = False  # YOLO on by default; run(detect=False) turns it off
 
         self.tool_handler = self.tool_handler_cls(self)
         self.router = EventRouter(
@@ -72,7 +74,7 @@ class Pal(ABC):
             on_user_turn=self._on_user_turn,
             last_spoke_at=lambda: self.last_spoke_at,
         )
-        logger.info("[Start up] Initialized")
+        logger.info("initialized")
 
     def run(self, text_mode: bool = False, detect: bool = True):
         """Start the agent. `detect` toggles YOLO object detection on the camera."""
@@ -82,12 +84,13 @@ class Pal(ABC):
         _thread(self._feed_captures, see.run(self.vision_trigger, detect=self.detect))
         _thread(self.router.run, self.events)
         _thread(self._respond_loop)
-        logger.info("[Start up] All threads started")
+        logger.info("all threads started")
 
     # --- Stages --------------------------------------------------------------
 
     def _feed(self, source):
         for event in source:
+            record("event", event)
             self.events.put(event)
 
     def _feed_captures(self, captures):
@@ -97,12 +100,14 @@ class Pal(ABC):
             capture_id = uuid4()
             path = CAPTURES_DIR / f"{capture_id}.jpg"
             cv2.imwrite(str(path), crop)
-            self.captures.put(Observation(
+            observation = Observation(
                 id=capture_id, actor=Actor.PAL, role=Role.CONTEXT,
                 description=f"camera capture of {label}", label=label, confidence=conf,
                 image_path=str(path),
-            ))
-            logger.info(f"[Vision]   captured {label} ({conf:.2f})")
+            )
+            record("capture", observation)
+            self.captures.put(observation)
+            logger.info(f"captured {label} ({conf:.2f})")
 
     def _on_user_turn(self, turn: UserTurn):
         with self._lock:

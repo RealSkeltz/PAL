@@ -5,18 +5,20 @@ history; everything else is context. Typed input is direct by nature. Speech
 is direct when it names PAL or comes right after PAL spoke; only when neither
 holds does the slower model gate decide.
 """
+import logging
 import queue
 import re
 import threading
 from dataclasses import replace
 from typing import Callable
 
-from pal.debug.preview import preview
 from pal.routing.gate import addressed_by_name, should_speak, within_conversation_window
-from pal.log import logger
+from pal.log import record
 from pal.routing.visual_cues import VISUAL_CUES
 from pal.schemas.event import Actor, Event, Language, Observation, Role
 from pal.schemas.turn import ConversationTurn, UserTurn
+
+logger = logging.getLogger(__name__)
 
 CAPTURE_WAIT_SECONDS = 1.0
 
@@ -39,7 +41,7 @@ class EventRouter:
         self.last_spoke_at = last_spoke_at
 
     def run(self, events: queue.Queue):
-        logger.info("[Start up] router started")
+        logger.info("started")
         while True:
             self.route(events.get())
 
@@ -48,8 +50,7 @@ class EventRouter:
             self.context.append(event)
             return
 
-        logger.info(f"[Heard]    {event.actor.value}: {event.text!r}")
-        preview.add_event("user_speech", {"text": event.text})
+        logger.info(f"heard {event.actor.value}: {event.text!r}")
 
         if event.actor is not Actor.USER:
             self.context.append(event)
@@ -66,21 +67,23 @@ class EventRouter:
 
     def _is_for_pal(self, event: Language) -> bool:
         if addressed_by_name(event.text):
-            logger.info("[Gate]     addressed by name -> speak")
-            return True
+            return self._decided(event, "name", speak=True)
         if within_conversation_window(self.last_spoke_at()):
-            logger.info("[Gate]     within conversation window -> speak")
-            return True
-        return self._gate(event)
-
-    def _gate(self, event: Language) -> bool:
+            return self._decided(event, "window", speak=True)
         try:
             decision = should_speak(event.text, None, self.history)
         except Exception:
             logger.exception("gate failed, responding anyway")
-            return True
-        logger.info(f"[Gate]     {decision.reason} ({decision.probability:.2f}) -> {'speak' if decision.speak else 'silent'}")
-        return decision.speak
+            return self._decided(event, "gate_error", speak=True)
+        return self._decided(event, "model", decision.speak, decision.reason, decision.probability)
+
+    def _decided(self, event: Language, via: str, speak: bool, reason: str | None = None,
+                 probability: float | None = None) -> bool:
+        detail = f" {reason} ({probability:.2f})" if reason is not None else ""
+        logger.info(f"gate: {via}{detail} -> {'speak' if speak else 'silent'}")
+        record("gate", {"event_id": str(event.id), "via": via, "speak": speak,
+                        "reason": reason, "probability": probability})
+        return speak
 
     def _attachments(self, text: str) -> list[Observation]:
         """The latest camera capture; if there is none and the user refers to
@@ -92,7 +95,7 @@ class EventRouter:
                 latest = self.captures.get(timeout=CAPTURE_WAIT_SECONDS)
                 self.context.append(latest)
             except queue.Empty:
-                logger.info("[Image]    vision trigger pending but no image arrived")
+                logger.info("vision trigger pending but no image arrived")
         return [latest] if latest is not None else []
 
     def _drain_captures(self) -> Observation | None:
