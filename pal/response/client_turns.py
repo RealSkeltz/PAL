@@ -26,8 +26,10 @@ def to_client_turns(history: list[ConversationTurn], max_turns: int = MAX_TURNS)
     turns = []
     for i, turn in enumerate(window):
         if isinstance(turn, UserTurn):
-            images = [_load_image(o.image_path) for o in turn.attachments if o.image_path] if i == last_user else []
-            turns.append(Turn(role="user", text=turn.utterance.text, images=images))
+            frames = [o for o in turn.attachments if o.image_path]
+            current = i == last_user
+            images = [_load_image(o.image_path) for o in frames] if current else []
+            turns.append(Turn(role="user", text=_frame_notes(frames, current) + turn.utterance.text, images=images))
             continue
 
         text = turn.spoken_text
@@ -37,6 +39,16 @@ def to_client_turns(history: list[ConversationTurn], max_turns: int = MAX_TURNS)
         turns.append(Turn(role="assistant", text=text, tool_calls=calls))
         turns.extend(Turn(role="tool", text=a.result or "", tool_call_id=_call_id(a)) for a in turn.actions)
     return turns
+
+
+def _frame_notes(frames: list, current: bool) -> str:
+    """Say where a frame was, so a new one isn't mistaken for a contradiction of an old one."""
+    if not frames:
+        return ""
+    taken = ", ".join(f"{o.at.astimezone():%H:%M:%S}" for o in frames)
+    if current:
+        return f"[New camera frame, taken {taken}, attached automatically; not a request to describe it.]\n"
+    return f"[A camera frame taken {taken} was attached here; it is no longer shown.]\n"
 
 
 def _call_id(action: Action) -> str:

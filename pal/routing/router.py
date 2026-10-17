@@ -76,7 +76,8 @@ class EventRouter:
             via = "model"
 
         try:
-            speak_decision, look_decision = assess(event.text, self.memory.history, ask_speak=via == "model")
+            speak_decision, look_decision = assess(event.text, self.memory.history, ask_speak=via == "model",
+                                                       situation=self.memory.gate_brief())
         except Exception:
             logger.exception("gate failed, responding anyway, without the camera")
             speak_decision = look_decision = None

@@ -132,7 +132,7 @@ class Pal:
             cv2.imwrite(str(path), crop)
             observation = Observation(
                 id=capture_id, actor=Actor.PAL, role=Role.CONTEXT,
-                description=f"camera capture of {label}", label=label, confidence=conf,
+                description=f"{label} in view", label=label, confidence=conf,
                 image_path=str(path),
             )
             record("capture", observation)
@@ -162,7 +162,8 @@ class Pal:
                 self.cancel.clear()
                 self._responding = True
                 try:
-                    respond(self.memory.history, pending, self.system_prompt, self.client, self.voice,
+                    system = "\n\n".join(p for p in (self.system_prompt, self.memory.background()) if p)
+                    respond(self.memory.history, pending, system, self.client, self.voice,
                             tools=self.tool_handler, cancel=self.cancel)
                 finally:
                     self._responding = False

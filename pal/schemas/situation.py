@@ -1,7 +1,7 @@
 """What Buddy has gathered about the user's surroundings over a run.
 
 A small, distilled picture built up from many events: where the user is, who
-is around, what is going on, and what the user is trying to do. Each item says
+is around, and what is going on. Each item says
 how it is known, how sure Buddy is, and when it was last supported, so a single
 overheard remark stays a tentative guess, and items nothing supports anymore
 can fade.
@@ -40,6 +40,5 @@ class Fact:
 class Situation:
     place: Fact | None = None
     activity: Fact | None = None
-    people: list[Fact] = field(default_factory=list)
-    goals: list[Fact] = field(default_factory=list)  # what the user is trying to do
+    people: list[Fact] = field(default_factory=list)  # who else is around right now
     updated_at: datetime | None = None                # None until the first update

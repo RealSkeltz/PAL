@@ -5,8 +5,8 @@ Each section lists what to say and the log lines that show whether it worked.
 
 **Before you start**
 
-- After PAL speaks, anything you say within **5 seconds** counts as talking to PAL.
-  Where it says **(wait 10 s)**, really wait, or the model gate isn't tested.
+- After PAL speaks, anything you say within **10 seconds** counts as talking to PAL.
+  Where it says **(wait 15 s)**, really wait, or the model gate isn't tested.
 - PAL treats a pause of **0.5 seconds** as the end of what you said.
 - Every reply ends with a `timing:` line. **first audio** is the number to watch.
 
@@ -18,9 +18,9 @@ Each section lists what to say and the log lines that show whether it worked.
 |---|---|
 | "Pal, can you hear me?" | `gate: name -> speak` and a reply in the new male voice |
 | right after it answers: "How are you today?" | `gate: window -> speak` |
-| (wait 10 s) "What's the capital of Australia?" | `gate: model addressed (...) -> speak` |
-| (wait 10 s) "Hey, did you eat lunch yet? I'm starving." | `gate: model not_for_pal (...) -> silent` |
-| (wait 10 s) "Ugh, this traffic is terrible." | `-> silent` |
+| (wait 15 s) "What's the capital of Australia?" | `gate: model addressed (...) -> speak` |
+| (wait 15 s) "Hey, did you eat lunch yet? I'm starving." | `gate: model not_for_pal (...) -> silent` |
+| (wait 15 s) "Ugh, this traffic is terrible." | `-> silent` |
 
 ## 2. Camera: only when the question needs it
 
@@ -41,7 +41,7 @@ If the object isn't one the detector knows, you'll see `trigger fired but no obj
 | Say | Expect |
 |---|---|
 | "Pal, make a note that the server room code is four two seven one." | `tool: save_note(...)` |
-| (wait 10 s) "Pal, what's in my notes?" | `tool: list_notes()` and the note read back |
+| (wait 15 s) "Pal, what's in my notes?" | `tool: list_notes()` and the note read back |
 | "Pal, set a timer for twenty seconds for the tea." | `tool: set_timer(...)`; after 20 s, `timer done: tea` in the log (PAL doesn't speak it yet) |
 | "Pal, save that image as test shot." | `tool: save_last_image(...)`, file in `data/saved_images/` |
 

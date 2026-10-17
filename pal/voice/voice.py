@@ -38,7 +38,7 @@ class _Clip:
 
 
 class Voice:
-    def __init__(self, voice: str = "bm_george", speed: float = 1.2):
+    def __init__(self, voice: str = "af_sky", speed: float = 1.2):
         self.voice = voice
         self.speed = speed
 
