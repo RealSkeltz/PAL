@@ -5,9 +5,11 @@
     situation     where the user is, what is going on, who is around (right now)
     user_memory   lasting facts about the user, people in their life, their preferences
     goal_memory   the user's long-term goals and short-term tasks, with status
+    episodic_memory  a timeline of what happened, tied to the goals it relates to
 
-The router writes events and turns in. The responder reads the history and
-`background()`; the gate reads `gate_brief()`. The three distilled memories are
+The router writes events and turns in. The responder reads the history,
+`background()` and `recall()`; the gate reads `gate_brief()`. Everything is also
+indexed for recall (`index_loop` embeds new entries in the background). The three distilled memories are
 revised in the background (`watch`) once the user and Buddy haven't talked for
 a while, so they never compete with a reply. Other people talking doesn't count
 as talking to Buddy; their remarks are simply batched into the next update.
@@ -18,10 +20,14 @@ from typing import Callable
 
 from pal.llm.base import LLMClient
 from pal.log import record
+from pal.memory import episodic as episodic_updater
 from pal.memory import goals as goal_updater
 from pal.memory import notes
 from pal.memory import situation as situation_updater
 from pal.memory import user as user_updater
+from pal.memory.recall import Entry, Hit, RecallIndex, format_hits
+from pal.llm.embedding_client import EmbeddingClient
+from pal.schemas.episode import EpisodicMemory
 from pal.schemas.event import Event
 from pal.schemas.goals import GoalMemory, Status
 from pal.schemas.situation import Situation
@@ -34,22 +40,26 @@ QUIET_SECONDS = 30    # revise memory this long after the last exchange with Bud
 MIN_GAP_SECONDS = 60  # and no more often than this, so background chatter is batched
 UNSURE = 0.6          # below this, background() marks an item as a guess
 GATE_MIN = 0.5        # below this, an item is left out of the gate's brief
+EPISODES_IN_BACKGROUND = 8   # latest episodes the response model sees
+RECENT_TURNS = 20            # the conversation the response model already sees; not worth recalling
 
 
 class Memory:
-    def __init__(self, client: LLMClient):
+    def __init__(self, client: LLMClient, embedder: EmbeddingClient | None = None):
         self.client = client
+        self.recall_index = RecallIndex(embedder)
 
         self.context: list[Event] = []
         self.history: list[ConversationTurn] = []
         self.situation = Situation()
         self.user_memory = UserMemory()
         self.goal_memory = GoalMemory()
+        self.episodic_memory = EpisodicMemory()
 
         self._last_interaction = time.time()  # last user turn, or Buddy still busy answering
         self._last_update = time.time()
         # ids of events and turns each memory has already taken in, so a failed update retries them
-        self._summarized: dict[str, set] = {"situation": set(), "user_memory": set(), "goal_memory": set()}
+        self._summarized: dict[str, set] = {"situation": set(), "user_memory": set(), "goal_memory": set(), "episodic_memory": set()}
 
     def add_event(self, event: Event):
         self.context.append(event)
@@ -73,6 +83,9 @@ class Memory:
     def update_goal_oriented_memory(self):
         self._update("goal_memory", goal_updater)
 
+    def update_episodic_memory(self):
+        self._update("episodic_memory", episodic_updater)
+
     def _update(self, attr: str, updater):
         seen = self._summarized[attr]
         events = [e for e in list(self.context) if e.id not in seen]
@@ -82,17 +95,14 @@ class Memory:
 
         current = getattr(self, attr)
         start = time.time()
-        update = self.client.parse(
-            system=updater.system_prompt(),
-            conversation=notes.request(notes.describe(updater.sections(current)), events, turns),
-            output=updater.Update,
-        )
-        new = updater.apply(current, update)
+        conversation, context = updater.build(current, events, turns, self)
+        update = self.client.parse(system=updater.system_prompt(), conversation=conversation, output=updater.Update)
+        new = updater.apply(current, update, context)
         setattr(self, attr, new)
         seen.update(x.id for x in events + turns)
 
         logger.info(f"{updater.LABEL} updated from {len(events)} events and {len(turns)} turns "
-                    f"({time.time() - start:.1f}s):\n{notes.summary(updater.sections(new))}")
+                    f"({time.time() - start:.1f}s):\n{updater.summary(new)}")
         record(attr, new)
 
     def watch(self, busy: Callable[[], bool] = lambda: False,
@@ -109,7 +119,9 @@ class Memory:
             if now - self._last_interaction < quiet_seconds or now - self._last_update < min_gap_seconds \
                     or not self._has_unsummarized():
                 continue
-            for update in (self.update_situation, self.update_user_oriented_memory, self.update_goal_oriented_memory):
+            # goals before episodes, so new episodes can point to goals found in this round
+            for update in (self.update_situation, self.update_user_oriented_memory,
+                           self.update_goal_oriented_memory, self.update_episodic_memory):
                 try:
                     update()
                 except Exception:
@@ -136,11 +148,45 @@ class Memory:
         add("Long-term goals", [x for x in g.long_term if x.status is Status.OPEN])
         add("Current tasks", [x for x in g.tasks if x.status is Status.OPEN])
         add("Recently finished", [x for x in g.long_term + g.tasks if x.status is Status.DONE])
+        episodes = self.episodic_memory.episodes[-EPISODES_IN_BACKGROUND:]
+        if episodes:
+            lines.append("Earlier, in order:\n" + "\n".join(
+                f"- {e.at.astimezone():%H:%M} {e.what}" for e in episodes))
         if not lines:
             return ""
         return ("## What you've gathered so far\n\n"
                 "Use this to understand the user and their surroundings, but don't bring it up unless it helps "
                 "answer what they said. Items marked (unsure) are guesses.\n\n" + "\n".join(lines))
+
+    # --- Recall ---------------------------------------------------------------
+
+    def index_loop(self, every_seconds: float = 2.0):
+        """Run forever: index new events, turns and episodes, and embed them. Meant for its own thread."""
+        while True:
+            try:
+                self._sync_index()
+            except Exception:
+                logger.exception("indexing for recall failed")
+            time.sleep(every_seconds)
+
+    def recall(self, query: str, k: int = 5, include_recent: bool = False) -> list[Hit]:
+        """Earlier events, turns and episodes matching `query`, by keyword and meaning. By default
+        leaves out the recent conversation, which the response model already has."""
+        self._sync_index()
+        recent = set() if include_recent else {t.id for t in list(self.history)[-RECENT_TURNS:]}
+        return self.recall_index.search(query, k=k, exclude=recent)
+
+    def recall_text(self, query: str, k: int = 8) -> str:
+        return format_hits(self.recall(query, k=k))
+
+    def _sync_index(self):
+        entries = [Entry(e.id, e.at, "event", line) for e in list(self.context) if (line := notes.event_line(e))]
+        entries += [Entry(t.id, at, "turn", notes.turn_line(t)) for t in list(self.history)
+                    if not _in_progress(t) and (at := notes.turn_time(t)) is not None]
+        entries += [Entry(e.id, e.at, "episode", f"episode: {e.what}" + (f" (with {', '.join(e.who)})" if e.who else ""))
+                    for e in self.episodic_memory.episodes]
+        self.recall_index.add(entries)
+        self.recall_index.embed_pending()
 
     def gate_brief(self) -> str | None:
         """For the gate: a few words on the present moment. Short, since the gate reads every token."""

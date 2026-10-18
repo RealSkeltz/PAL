@@ -33,7 +33,15 @@ def sections(m: UserMemory):
     return [("about", m.about), ("person", m.people), ("preference", m.preferences)]
 
 
-def apply(previous: UserMemory, update: Update) -> UserMemory:
+def build(current, events, turns, memory):
+    return notes.fact_build(sections(current), events, turns)
+
+
+def summary(current) -> str:
+    return notes.summary(sections(current))
+
+
+def apply(previous: UserMemory, update: Update, context=None) -> UserMemory:
     now = datetime.now(timezone.utc)
     earlier = dict(notes.with_ids(sections(previous)))
     return UserMemory(

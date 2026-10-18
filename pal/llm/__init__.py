@@ -17,7 +17,7 @@ __all__ = [
 ]
 
 
-PROVIDERS = ("ollama", "anthropic", "foundry", "typesafe")
+PROVIDERS = ("ollama", "anthropic", "foundry", "typesafe", "embedding")
 
 
 def get_client(spec: str, **kwargs) -> LLMClient:
@@ -46,6 +46,10 @@ def get_client(spec: str, **kwargs) -> LLMClient:
     if provider == "anthropic":
         from pal.llm.anthropic_client import AnthropicClient
         return AnthropicClient(**kwargs)
+
+    if provider == "embedding":
+        from pal.llm.embedding_client import EmbeddingClient
+        return EmbeddingClient(**kwargs)
 
     if provider == "typesafe":
         from pal.llm.typesafe_client import SystemOneClient

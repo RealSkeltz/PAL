@@ -33,7 +33,15 @@ def sections(s: Situation):
     return [("place", [s.place] if s.place else []), ("activity", [s.activity] if s.activity else []), ("person", s.people)]
 
 
-def apply(previous: Situation, update: Update) -> Situation:
+def build(current, events, turns, memory):
+    return notes.fact_build(sections(current), events, turns)
+
+
+def summary(current) -> str:
+    return notes.summary(sections(current))
+
+
+def apply(previous: Situation, update: Update, context=None) -> Situation:
     now = datetime.now(timezone.utc)
     earlier = dict(notes.with_ids(sections(previous)))
     return Situation(

@@ -56,6 +56,16 @@ class BuiltinTools(ToolHandler):
         return f"Image saved as {filename}.jpg"
 
     @tool(
+        "Search everything heard, seen and said earlier in this session: conversations with the user, "
+        "remarks by other people, what the camera saw, and a timeline of what happened. Use it when the "
+        "user refers to something from earlier that isn't in the conversation you have.",
+        params={"query": {"type": "string", "description": "what to look for, in a few words"}},
+        required=["query"],
+    )
+    def recall(self, query: str) -> str:
+        return self.pal.memory.recall_text(query)
+
+    @tool(
         "Set a timer that will alert the user after a duration in seconds.",
         params={"seconds": {"type": "integer"}, "label": {"type": "string"}},
         required=["seconds"],

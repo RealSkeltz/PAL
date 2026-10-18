@@ -1,15 +1,19 @@
 """What the user is trying to get done: long-term goals and short-term tasks.
 
-Each is a Fact (see situation.py) with a status, so finished and abandoned ones
-stay known for a while instead of silently disappearing.
+Each goal keeps a stable id across updates, so episodes can point to the goals
+they relate to. A status keeps finished and abandoned ones known for a while
+instead of silently disappearing.
 """
 from dataclasses import field
 from datetime import datetime
 from enum import StrEnum
+from typing import Annotated
+from uuid import UUID, uuid4
 
+from pydantic import Field
 from pydantic.dataclasses import dataclass
 
-from pal.schemas.situation import Fact
+from pal.schemas.situation import Source, _now
 
 
 class Status(StrEnum):
@@ -19,9 +23,15 @@ class Status(StrEnum):
 
 
 @dataclass(frozen=True, kw_only=True)
-class Goal(Fact):
+class Goal:
+    id: UUID = field(default_factory=uuid4)
+    text: str
+    source: Source
+    confidence: Annotated[float, Field(ge=0, le=1)]
     status: Status = Status.OPEN
     progress: str | None = None
+    first_seen: datetime = field(default_factory=_now)
+    last_seen: datetime = field(default_factory=_now)  # last time anything supported it
 
 
 @dataclass(frozen=True, kw_only=True)

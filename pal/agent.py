@@ -32,6 +32,7 @@ from pal.routing.router import EventRouter
 from pal.routing.system_one import client as gate_client
 from pal.log import record
 from pal.memory import Memory
+from pal.memory.recall import format_hits
 from pal.schemas.event import Actor, Observation, Role, Written
 from pal.schemas.turn import UserTurn
 from pal.tools.builtin import BuiltinTools
@@ -47,6 +48,8 @@ def _thread(target, *args):
 
 # Override per run, e.g. PAL_MODEL=foundry:claude-haiku-5-5 python main.py
 DEFAULT_MODEL = "ollama:qwen3.5:9b"
+EMBEDDING_MODEL = "embedding:embeddinggemma-2:740m"  # local, for recall
+AUTO_RECALL_K = 4
 
 
 class Pal:
@@ -57,7 +60,8 @@ class Pal:
         self.client = get_client(self.model)
 
         # State
-        self.memory = Memory(self.client)
+        self.embedder = get_client(EMBEDDING_MODEL)
+        self.memory = Memory(self.client, self.embedder)
         self.last_image = None  # read by the save_last_image tool
         self.last_spoke_at = 0.0
 
@@ -95,11 +99,12 @@ class Pal:
         _thread(self._respond_loop)
         _thread(self._warm_up)
         _thread(self.memory.watch, lambda: self._responding or self.voice.busy)
+        _thread(self.memory.index_loop)
         atexit.register(self._release)
         logger.info("all threads started")
 
     def _warm_up(self):
-        for name, client in (("gate", gate_client), ("response", self.client)):
+        for name, client in (("gate", gate_client), ("response", self.client), ("embedding", self.embedder)):
             start = time.time()
             try:
                 loaded = client.warm_up()
@@ -110,7 +115,7 @@ class Pal:
                 logger.info(f"{name} model ready ({time.time() - start:.1f}s)")
 
     def _release(self):
-        for client in (gate_client, self.client):
+        for client in (gate_client, self.client, self.embedder):
             try:
                 client.release()
             except Exception:
@@ -153,6 +158,22 @@ class Pal:
             self.idle.clear()
             self._wake.set()
 
+    def _recalled(self, pending: list[UserTurn]) -> str:
+        """Automatic recall: earlier things that match what the user just said, for the system prompt."""
+        query = " ".join(t.utterance.text for t in pending)
+        start = time.time()
+        try:
+            hits = self.memory.recall(query, k=AUTO_RECALL_K)
+        except Exception:
+            logger.exception("automatic recall failed")
+            return ""
+        logger.info(f"recall: {len(hits)} hits ({(time.time() - start) * 1000:.0f} ms)"
+                    + "".join(f"\n    {h.similarity:.2f} {h.entry.text[:100]}" for h in hits))
+        if not hits:
+            return ""
+        return ("## Possibly relevant from earlier\n\nFound automatically in what was heard and said earlier "
+                "in this session; use it only if it helps.\n\n" + format_hits(hits))
+
     def _respond_loop(self):
         while True:
             self._wake.wait()
@@ -162,7 +183,8 @@ class Pal:
                 self.cancel.clear()
                 self._responding = True
                 try:
-                    system = "\n\n".join(p for p in (self.system_prompt, self.memory.background()) if p)
+                    system = "\n\n".join(p for p in (self.system_prompt, self.memory.background(),
+                                                      self._recalled(pending)) if p)
                     respond(self.memory.history, pending, system, self.client, self.voice,
                             tools=self.tool_handler, cancel=self.cancel)
                 finally:

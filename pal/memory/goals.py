@@ -39,7 +39,15 @@ def sections(g: GoalMemory):
     return [("goal", g.long_term), ("task", g.tasks)]
 
 
-def apply(previous: GoalMemory, update: Update) -> GoalMemory:
+def build(current, events, turns, memory):
+    return notes.fact_build(sections(current), events, turns)
+
+
+def summary(current) -> str:
+    return notes.summary(sections(current))
+
+
+def apply(previous: GoalMemory, update: Update, context=None) -> GoalMemory:
     now = datetime.now(timezone.utc)
     earlier = dict(notes.with_ids(sections(previous)))
     goal = lambda u: notes.to_fact(u, earlier, now, cls=Goal, status=Status(u.status), progress=u.progress)

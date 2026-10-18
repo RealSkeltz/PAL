@@ -65,6 +65,8 @@ def to_fact(u: FactUpdate | None, earlier: dict[str, Fact], now: datetime, cls=F
     if u is None:
         return None
     before = earlier.get(u.previous_id) if u.previous_id else None
+    if before is not None and hasattr(before, "id"):
+        extra.setdefault("id", before.id)  # e.g. a goal keeps its id, so episodes can keep pointing to it
     return cls(
         text=u.text,
         source=Source(u.source),
@@ -83,6 +85,21 @@ def summary(sections: list[tuple[str, list[Fact]]]) -> str:
     return "\n".join(f"    {label:11s} {f.text}{_goal_detail(f)}  ({f.source.value}, {f.confidence:.1f})" for label, f in rows)
 
 
+def fact_build(sections: list[tuple[str, list[Fact]]], events: list[Event], turns: list[ConversationTurn]):
+    """`build` for the fact-based memories: current facts with ids, then new notes. No extra context."""
+    return request(describe(sections), events, turns), None
+
+
+def numbered_notes(events: list[Event], turns: list[ConversationTurn]) -> tuple[str, dict[str, tuple]]:
+    """Notes with an id per line ("n1", "n2", ...), and what each id stands for: (source id, time)."""
+    items = [(e.at, e.id, event_line(e)) for e in events]
+    items += [(turn_time(t), t.id, turn_line(t)) for t in turns if turn_time(t) is not None]
+    items = sorted((x for x in items if x[2]), key=lambda x: x[0])
+    ids = {f"n{i}": (source, at) for i, (at, source, _) in enumerate(items, 1)}
+    text = "\n".join(f"[n{i}] {at.astimezone():%H:%M:%S} {line}" for i, (at, _, line) in enumerate(items, 1))
+    return text or "(nothing new)", ids
+
+
 def _goal_detail(f: Fact) -> str:
     if not isinstance(f, Goal):
         return ""
@@ -90,18 +107,18 @@ def _goal_detail(f: Fact) -> str:
 
 
 def _notes(events: list[Event], turns: list[ConversationTurn]) -> str:
-    lines = [(e.at, _event_line(e)) for e in events]
+    lines = [(e.at, event_line(e)) for e in events]
     for turn in turns:
-        at = _turn_time(turn)
+        at = turn_time(turn)
         if at is not None:
-            lines.append((at, _turn_line(turn)))
+            lines.append((at, turn_line(turn)))
     lines = [(at, line) for at, line in lines if line]
     if not lines:
         return "(nothing new)"
     return "\n".join(f"{at.astimezone():%H:%M:%S} {line}" for at, line in sorted(lines, key=lambda x: x[0]))
 
 
-def _event_line(event: Event) -> str | None:
+def event_line(event: Event) -> str | None:
     if isinstance(event, Language):
         if event.actor is Actor.USER:
             return f"user (not to Buddy): {event.text}"
@@ -111,7 +128,7 @@ def _event_line(event: Event) -> str | None:
     return None
 
 
-def _turn_line(turn: ConversationTurn) -> str:
+def turn_line(turn: ConversationTurn) -> str:
     if isinstance(turn, UserTurn):
         seen = "".join(f" [camera: {o.description}]" for o in turn.attachments)
         return f"user to Buddy: {turn.utterance.text}{seen}"
@@ -121,7 +138,7 @@ def _turn_line(turn: ConversationTurn) -> str:
     return " | ".join(parts)
 
 
-def _turn_time(turn: ConversationTurn) -> datetime | None:
+def turn_time(turn: ConversationTurn) -> datetime | None:
     if turn.utterance is not None:
         return turn.utterance.at
     return turn.actions[0].at if isinstance(turn, PalTurn) and turn.actions else None
