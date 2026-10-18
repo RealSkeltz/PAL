@@ -66,6 +66,16 @@ class BuiltinTools(ToolHandler):
         return self.pal.memory.recall_text(query)
 
     @tool(
+        "Search the reference material you were given, such as site procedures, manuals and plans. "
+        "Use it for questions about how things are done or where things are, where the documents may "
+        "have the answer.",
+        params={"query": {"type": "string", "description": "what to look for, in a few words"}},
+        required=["query"],
+    )
+    def lookup(self, query: str) -> str:
+        return self.pal.memory.knowledge.lookup_text(query)
+
+    @tool(
         "Set a timer that will alert the user after a duration in seconds.",
         params={"seconds": {"type": "integer"}, "label": {"type": "string"}},
         required=["seconds"],

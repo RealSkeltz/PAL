@@ -18,12 +18,13 @@ import os
 import queue
 import threading
 import time
+from pathlib import Path
 from uuid import uuid4
 
 import cv2
 
 from pal.llm import get_client
-from pal.config import CAPTURES_DIR
+from pal.config import CAPTURES_DIR, KNOWLEDGE_DIR
 from pal.perception.hearing import listen
 from pal.perception.vision import see
 from pal.response.prompt import build_system_prompt
@@ -50,10 +51,12 @@ def _thread(target, *args):
 DEFAULT_MODEL = "ollama:qwen3.5:9b"
 EMBEDDING_MODEL = "embedding:embeddinggemma-2:740m"  # local, for recall
 AUTO_RECALL_K = 4
+AUTO_KNOWLEDGE_K = 3
 
 
 class Pal:
-    def __init__(self, system_prompt: str | None = None, model: str | None = None):
+    def __init__(self, system_prompt: str | None = None, model: str | None = None,
+                 knowledge: list[Path] | None = None):
         # `model` is a "provider:name" spec, e.g. "ollama:qwen3.5:9b"
         self.system_prompt = system_prompt or build_system_prompt()
         self.model = model or os.environ.get("PAL_MODEL", DEFAULT_MODEL)
@@ -62,6 +65,7 @@ class Pal:
         # State
         self.embedder = get_client(EMBEDDING_MODEL)
         self.memory = Memory(self.client, self.embedder)
+        self.knowledge_paths = list(knowledge or [])  # on top of KNOWLEDGE_DIR, for this run
         self.last_image = None  # read by the save_last_image tool
         self.last_spoke_at = 0.0
 
@@ -100,6 +104,7 @@ class Pal:
         _thread(self._warm_up)
         _thread(self.memory.watch, lambda: self._responding or self.voice.busy)
         _thread(self.memory.index_loop)
+        _thread(self.memory.knowledge.load, [KNOWLEDGE_DIR, *self.knowledge_paths])
         atexit.register(self._release)
         logger.info("all threads started")
 
@@ -159,20 +164,28 @@ class Pal:
             self._wake.set()
 
     def _recalled(self, pending: list[UserTurn]) -> str:
-        """Automatic recall: earlier things that match what the user just said, for the system prompt."""
+        """Automatic recall: earlier things and reference material that match what the user just
+        said, for the system prompt."""
         query = " ".join(t.utterance.text for t in pending)
         start = time.time()
         try:
             hits = self.memory.recall(query, k=AUTO_RECALL_K)
+            knowledge = self.memory.knowledge.search(query, k=AUTO_KNOWLEDGE_K)
         except Exception:
             logger.exception("automatic recall failed")
             return ""
-        logger.info(f"recall: {len(hits)} hits ({(time.time() - start) * 1000:.0f} ms)"
-                    + "".join(f"\n    {h.similarity:.2f} {h.entry.text[:100]}" for h in hits))
-        if not hits:
-            return ""
-        return ("## Possibly relevant from earlier\n\nFound automatically in what was heard and said earlier "
-                "in this session; use it only if it helps.\n\n" + format_hits(hits))
+        logger.info(f"recall: {len(hits)} from earlier, {len(knowledge)} from reference material "
+                    f"({(time.time() - start) * 1000:.0f} ms)"
+                    + "".join(f"\n    {h.similarity:.2f} {h.entry.text[:100]}" for h in hits + knowledge))
+        sections = []
+        if hits:
+            sections.append("## Possibly relevant from earlier\n\nFound automatically in what was heard and said "
+                            "earlier in this session; use it only if it helps.\n\n" + format_hits(hits))
+        if knowledge:
+            sections.append("## From the reference material\n\nFound automatically in the documents you were given; "
+                            "use it only if it helps, and say so when your answer relies on it.\n\n"
+                            + self.memory.knowledge.format(knowledge))
+        return "\n\n".join(sections)
 
     def _respond_loop(self):
         while True:

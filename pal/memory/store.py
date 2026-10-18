@@ -6,6 +6,7 @@
     user_memory   lasting facts about the user, people in their life, their preferences
     goal_memory   the user's long-term goals and short-term tasks, with status
     episodic_memory  a timeline of what happened, tied to the goals it relates to
+    knowledge     semantic memory: reference documents, chunked and searchable
 
 The router writes events and turns in. The responder reads the history,
 `background()` and `recall()`; the gate reads `gate_brief()`. Everything is also
@@ -25,6 +26,7 @@ from pal.memory import goals as goal_updater
 from pal.memory import notes
 from pal.memory import situation as situation_updater
 from pal.memory import user as user_updater
+from pal.memory.knowledge import Knowledge
 from pal.memory.recall import Entry, Hit, RecallIndex, format_hits
 from pal.llm.embedding_client import EmbeddingClient
 from pal.schemas.episode import EpisodicMemory
@@ -48,6 +50,7 @@ class Memory:
     def __init__(self, client: LLMClient, embedder: EmbeddingClient | None = None):
         self.client = client
         self.recall_index = RecallIndex(embedder)
+        self.knowledge = Knowledge(embedder)  # semantic memory: reference material, loaded by the agent
 
         self.context: list[Event] = []
         self.history: list[ConversationTurn] = []

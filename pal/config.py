@@ -26,8 +26,12 @@ SAVED_IMAGES_DIR = DATA_DIR / "saved_images"
 CAPTURES_DIR = DATA_DIR / "captures"
 LOGS_DIR = DATA_DIR / "logs"
 SPEAKER_DATA = DATA_DIR / "speaker_id"  # training data for the speaker encoder
+KNOWLEDGE_DIR = DATA_DIR / "knowledge"        # reference material every run loads
+KNOWLEDGE_CACHE = DATA_DIR / "knowledge_cache"  # chunk embeddings, so unchanged documents aren't re-embedded
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SAVED_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
+KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
+KNOWLEDGE_CACHE.mkdir(parents=True, exist_ok=True)

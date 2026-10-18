@@ -13,6 +13,8 @@ def main():
     parser.add_argument("--preview-port", type=int, default=4200)
     parser.add_argument("--text", action="store_true",
                         help="Read from stdin instead of mic (no STT)")
+    parser.add_argument("--knowledge", action="append", default=[], metavar="PATH",
+                        help="Extra reference material (.md/.txt file or folder) for this run, on top of data/knowledge/")
     parser.add_argument("--no-yolo", action="store_true",
                         help="Skip object detection; send the whole frame to the vision model")
     parser.add_argument("--verbose", action="store_true",
@@ -30,7 +32,7 @@ def main():
         preview.start(port=args.preview_port)
         webbrowser.open(f"http://127.0.0.1:{args.preview_port}")
 
-    pal = Pal()
+    pal = Pal(knowledge=args.knowledge)
     pal.run(text_mode=args.text, detect=not args.no_yolo)
     try:
         threading.Event().wait()  # keep main thread alive

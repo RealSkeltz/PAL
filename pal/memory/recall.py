@@ -25,9 +25,9 @@ import numpy as np
 
 from pal.llm.embedding_client import EmbeddingClient
 
-STOPWORDS = set("""a an and are as at be but by did do does for from had has have he her his how i in is it its
-me my of on or our she so that the their them they this to was we were what when where which who why will with
-you your buddy""".split())
+STOPWORDS = set("""a about all an and any are as at be but by can could did do does for from get got had has have
+he her here his how i if in is it its just me my no not now of on or our she should so some than that the their them
+then there they this to up was we were what when where which who why will with would you your buddy""".split())
 RRF_K = 60        # reciprocal rank fusion constant; higher flattens the difference between ranks
 MIN_MARGIN = 0.08  # a vector hit must beat the median similarity by this much (real answers: 0.10-0.19)
 
@@ -35,8 +35,8 @@ MIN_MARGIN = 0.08  # a vector hit must beat the median similarity by this much (
 @dataclass(frozen=True)
 class Entry:
     id: UUID
-    at: datetime
-    kind: str  # "event", "turn" or "episode"
+    at: datetime | None  # None for reference material, which has no time
+    kind: str            # "event", "turn", "episode" or "knowledge"
     text: str
 
 
@@ -60,20 +60,22 @@ class RecallIndex:
     def __len__(self):
         return len(self._entries)
 
-    def add(self, entries: list[Entry]):
-        """Add new entries; an entry whose text changed (an extended episode) is replaced."""
+    def add(self, entries: list[Entry], vectors: np.ndarray | None = None):
+        """Add new entries; an entry whose text changed (an extended episode) is replaced.
+        `vectors`, one row per entry, skips embedding them (e.g. from a cache)."""
         with self._lock:
-            for e in entries:
+            for n, e in enumerate(entries):
                 i = self._position.get(e.id)
                 if i is not None and self._entries[i].text == e.text:
                     continue
+                vector = vectors[n] if vectors is not None else None
                 if i is None:
                     self._position[e.id] = len(self._entries)
                     self._entries.append(e)
                     self._tokens.append(_tokenize(e.text))
-                    self._vectors.append(None)
+                    self._vectors.append(vector)
                 else:
-                    self._entries[i], self._tokens[i], self._vectors[i] = e, _tokenize(e.text), None
+                    self._entries[i], self._tokens[i], self._vectors[i] = e, _tokenize(e.text), vector
 
     def embed_pending(self):
         """Embed entries that don't have a vector yet. Meant to run in the background."""
@@ -123,7 +125,17 @@ def format_hits(hits: list[Hit]) -> str:
 
 
 def _tokenize(text: str) -> list[str]:
-    return [w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 1 and w not in STOPWORDS]
+    return [_stem(w) for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 1 and w not in STOPWORDS]
+
+
+def _stem(word: str) -> str:
+    """Light suffix stripping, so "drivers" matches "driver" and "checking" matches "check"."""
+    for suffix, keep in (("ies", "y"), ("sses", "ss"), ("ches", "ch"), ("shes", "sh"), ("xes", "x"),
+                         ("ing", ""), ("ed", ""), ("s", "")):
+        stem_length = len(word) - len(suffix) + len(keep)
+        if word.endswith(suffix) and stem_length >= 3 and not (suffix == "s" and word.endswith("ss")):
+            return word[:-len(suffix)] + keep
+    return word
 
 
 def _bm25(query: list[str], docs: list[list[str]], k1: float = 1.5, b: float = 0.75) -> list[float]:
