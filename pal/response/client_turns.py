@@ -2,7 +2,8 @@
 
 History is kept whole; everything that only exists to fit a model's context
 (dropping old turns, sending images for the latest user turn only) happens
-here, on the way out.
+here, on the way out. A user turn's automatic recall goes out with it every
+time, so a later reply sees what an earlier one was based on.
 """
 import base64
 from pathlib import Path
@@ -29,7 +30,8 @@ def to_client_turns(history: list[ConversationTurn], max_turns: int = MAX_TURNS)
             frames = [o for o in turn.attachments if o.image_path]
             current = i == last_user
             images = [_load_image(o.image_path) for o in frames] if current else []
-            turns.append(Turn(role="user", text=_frame_notes(frames, current) + turn.utterance.text, images=images))
+            text = _frame_notes(frames, current) + _recall_note(turn.recalled) + turn.utterance.text
+            turns.append(Turn(role="user", text=text, images=images))
             continue
 
         text = turn.spoken_text
@@ -48,7 +50,14 @@ def _frame_notes(frames: list, current: bool) -> str:
     taken = ", ".join(f"{o.at.astimezone():%H:%M:%S}" for o in frames)
     if current:
         return f"[New camera frame, taken {taken}, attached automatically; not a request to describe it.]\n"
-    return f"[A camera frame taken {taken} was attached here; it is no longer shown.]\n"
+    return (f"[A camera frame taken {taken} was shown with this message. It is no longer available, "
+            "but your answer to it was based on seeing it.]\n")
+
+
+def _recall_note(recalled: str) -> str:
+    if not recalled:
+        return ""
+    return f"[Found automatically for this message; use it only if it helps.\n{recalled}]\n"
 
 
 def _call_id(action: Action) -> str:

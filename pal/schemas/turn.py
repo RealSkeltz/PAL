@@ -55,6 +55,9 @@ class UserTurn:
     id: UUID = field(default_factory=uuid4)
     utterance: Spoken | Written
     attachments: list[Observation] = field(default_factory=list)  # e.g. the frame the user asked about
+    # What automatic recall found for this question. Kept with the turn, so later replies
+    # can see what this one was based on instead of finding a claim with nothing behind it.
+    recalled: str = ""
     response: Response = Response.PENDING
 
     def __post_init__(self):

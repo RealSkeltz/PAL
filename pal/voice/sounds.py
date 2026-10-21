@@ -23,6 +23,30 @@ def _make_chime(freqs, duration_s, sample_rate=SAMPLE_RATE, volume=0.25,
     return samples.astype(np.float32)
 
 
+def _soft_tone(freq, partials, duration_s, attack_s, decay, volume, sample_rate=SAMPLE_RATE):
+    """A single rounded note: `partials` are (multiple, amplitude, extra decay), so overtones fade
+    before the fundamental. Raised-cosine attack and a fade to exact zero, so it never clicks."""
+    t = np.arange(int(duration_s * sample_rate)) / sample_rate
+    samples = sum(a * np.sin(2 * np.pi * freq * k * t) * np.exp(-extra * t) for k, a, extra in partials)
+    samples /= np.max(np.abs(samples))
+    envelope = np.exp(-decay * t)
+    attack = int(attack_s * sample_rate)
+    envelope[:attack] *= 0.5 - 0.5 * np.cos(np.linspace(0, np.pi, attack))
+    tail = int(0.03 * sample_rate)
+    envelope[-tail:] *= 0.5 + 0.5 * np.cos(np.linspace(0, np.pi, tail))
+    return (samples * envelope * volume).astype(np.float32)
+
+
+# Played on every turn, so it stays quiet, short and identical each time: familiar, never surprising.
+_HEARD = _soft_tone(587, [(1, 1.0, 0), (2, 0.18, 12), (3, 0.04, 25)], duration_s=0.22,
+                    attack_s=0.008, decay=16, volume=0.12)
+
+
+def heard_tone():
+    """'Got it': the moment Buddy takes a question, before the answer is ready."""
+    return _HEARD
+
+
 def capture_tone():
     base = [523, 659]
     freqs = [f * random.uniform(0.98, 1.02) for f in base]

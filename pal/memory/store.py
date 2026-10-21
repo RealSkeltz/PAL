@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 QUIET_SECONDS = 30    # revise memory this long after the last exchange with Buddy
 MIN_GAP_SECONDS = 60  # and no more often than this, so background chatter is batched
+MAX_STALE_SECONDS = 180  # but in a long conversation without such a pause, update between replies this often
 UNSURE = 0.6          # below this, background() marks an item as a guess
 GATE_MIN = 0.5        # below this, an item is left out of the gate's brief
 EPISODES_IN_BACKGROUND = 8   # latest episodes the response model sees
@@ -109,18 +110,21 @@ class Memory:
         record(attr, new)
 
     def watch(self, busy: Callable[[], bool] = lambda: False,
-              quiet_seconds: float = QUIET_SECONDS, min_gap_seconds: float = MIN_GAP_SECONDS):
+              quiet_seconds: float = QUIET_SECONDS, min_gap_seconds: float = MIN_GAP_SECONDS,
+              max_stale_seconds: float = MAX_STALE_SECONDS):
         """Run forever: update all three memories once there's something new, `quiet_seconds`
         have passed since the user and Buddy last talked (`busy` means Buddy is still answering),
-        and `min_gap_seconds` since the last update. Meant for its own thread."""
+        and `min_gap_seconds` since the last update. A conversation that never pauses that long
+        still gets an update between replies every `max_stale_seconds`. Meant for its own thread."""
         while True:
             time.sleep(1)
             now = time.time()
             if busy():
                 self._last_interaction = now
                 continue
-            if now - self._last_interaction < quiet_seconds or now - self._last_update < min_gap_seconds \
-                    or not self._has_unsummarized():
+            quiet = now - self._last_interaction >= quiet_seconds
+            stale = now - self._last_update >= max_stale_seconds
+            if not (quiet or stale) or now - self._last_update < min_gap_seconds or not self._has_unsummarized():
                 continue
             # goals before episodes, so new episodes can point to goals found in this round
             for update in (self.update_situation, self.update_user_oriented_memory,

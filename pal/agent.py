@@ -40,7 +40,7 @@ from pal.memory.recall import format_hits
 from pal.schemas.event import Actor, Observation, Role, Written
 from pal.schemas.turn import UserTurn
 from pal.tools.builtin import BuiltinTools
-from pal.voice.sounds import capture_tone
+from pal.voice.sounds import heard_tone
 from pal.voice.voice import Voice
 
 logger = logging.getLogger(__name__)
@@ -90,7 +90,7 @@ class Pal:
 
         # Controls
         self.vision_trigger = threading.Event()
-        self.detect = False  # YOLO on by default; run(detect=False) turns it off
+        self.detect = False  # YOLO off by default; run(detect=True) turns it on
 
         self.tool_handler = BuiltinTools(self)
         self.router = EventRouter(
@@ -100,7 +100,7 @@ class Pal:
         )
         logger.info(f"initialized (response model {self.model}, gate model {gate_client.model})")
 
-    def run(self, text_mode: bool = False, detect: bool = True):
+    def run(self, text_mode: bool = False, detect: bool = False):
         """Start the agent. `detect` toggles YOLO object detection on the camera."""
         self.detect = detect
         self.voice.start()
@@ -146,7 +146,6 @@ class Pal:
 
     def _feed_captures(self, captures):
         for crop, label, conf in captures:
-            self.voice.play(capture_tone())
             self.last_image = crop
             capture_id = uuid4()
             path = CAPTURES_DIR / f"{capture_id}.jpg"
@@ -176,7 +175,7 @@ class Pal:
 
     def _recalled(self, pending: list[UserTurn]) -> str:
         """Automatic recall: earlier things and reference material that match what the user just
-        said, for the system prompt."""
+        said. Stored on the question it was found for (`UserTurn.recalled`)."""
         query = " ".join(t.utterance.text for t in pending)
         start = time.time()
         try:
@@ -190,13 +189,11 @@ class Pal:
                     + "".join(f"\n    {h.similarity:.2f} {h.entry.text[:100]}" for h in hits + knowledge))
         sections = []
         if hits:
-            sections.append("## Possibly relevant from earlier\n\nFound automatically in what was heard and said "
-                            "earlier in this session; use it only if it helps.\n\n" + format_hits(hits))
+            sections.append("From earlier in this session:\n" + format_hits(hits))
         if knowledge:
-            sections.append("## From the reference material\n\nFound automatically in the documents you were given; "
-                            "use it only if it helps, and say so when your answer relies on it.\n\n"
+            sections.append("From the reference material (say so when your answer relies on it):\n"
                             + self.memory.knowledge.format(knowledge))
-        return "\n\n".join(sections)
+        return "\n".join(sections)
 
     def _respond_loop(self):
         while True:
@@ -206,9 +203,12 @@ class Pal:
             if pending:
                 self.cancel.clear()
                 self._responding = True
+                # Here rather than when the turn arrives: after a barge-in, the cut-off reply's
+                # voice.stop() has run by now, so it can't swallow the cue.
+                self.voice.play(heard_tone())
                 try:
-                    system = "\n\n".join(p for p in (self.system_prompt, self.memory.background(),
-                                                      self._recalled(pending)) if p)
+                    pending[-1].recalled = self._recalled(pending)
+                    system = "\n\n".join(p for p in (self.system_prompt, self.memory.background()) if p)
                     respond(self.memory.history, pending, system, self.client, self.voice,
                             tools=self.tool_handler, cancel=self.cancel)
                 finally:

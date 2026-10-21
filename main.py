@@ -15,8 +15,8 @@ def main():
                         help="Read from stdin instead of mic (no STT)")
     parser.add_argument("--knowledge", action="append", default=[], metavar="PATH",
                         help="Extra reference material (.md/.txt file or folder) for this run, on top of data/knowledge/")
-    parser.add_argument("--no-yolo", action="store_true",
-                        help="Skip object detection; send the whole frame to the vision model")
+    parser.add_argument("--yolo", action="store_true",
+                        help="Run object detection and send a crop of the object nearest the center, instead of the whole frame")
     parser.add_argument("--remote", action="store_true",
                         help="Use a remote device (the phone app, over LiveKit) as mic, camera and speaker instead of this laptop")
     parser.add_argument("--verbose", action="store_true",
@@ -35,7 +35,7 @@ def main():
         webbrowser.open(f"http://127.0.0.1:{args.preview_port}")
 
     pal = Pal(knowledge=args.knowledge, remote=args.remote)
-    pal.run(text_mode=args.text, detect=not args.no_yolo)
+    pal.run(text_mode=args.text, detect=args.yolo)
     try:
         threading.Event().wait()  # keep main thread alive
     except KeyboardInterrupt:
