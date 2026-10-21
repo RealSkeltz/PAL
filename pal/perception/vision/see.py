@@ -7,7 +7,7 @@ os.environ["OPENCV_LOG_LEVEL"] = "SILENT"
 import cv2
 import numpy as np
 
-from typing import Generator
+from typing import Generator, Iterable
 from pal.config import VISION_MODELS
 
 from pal.debug.preview import preview
@@ -85,27 +85,35 @@ def downscale(frame: np.ndarray) -> np.ndarray:
     return cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
 
-def run(trigger: threading.Event, detect: bool = True) -> Generator[tuple[np.ndarray, str, float], None, None]:
+def camera() -> Generator[np.ndarray, None, None]:
+    """BGR frames from the laptop webcam, at about TARGET_FPS."""
+    # Only the camera handshake is noisy — suppressing wider than this would
+    # redirect fd 2 process-wide for the life of the generator, hiding every
+    # thread's tracebacks.
+    with suppress_stderr():
+        cap = cv2.VideoCapture(0)
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        yield frame
+        cv2.waitKey(DELAY)
+
+
+def run(trigger: threading.Event, detect: bool = True,
+        frames: Iterable[np.ndarray] | None = None) -> Generator[tuple[np.ndarray, str, float], None, None]:
     """Capture on trigger and yield (image, label, confidence).
 
     With `detect`, YOLO runs every frame and the trigger yields a crop of the
     object nearest the centre. Without it, no detector runs at all and the
     trigger yields the whole frame — useful when the subject is the scene rather
     than one object, or when YOLO's classes don't cover what you're looking at.
-    """
-    # Only the camera handshake is noisy — suppressing wider than this would
-    # redirect fd 2 process-wide for the life of the generator, hiding every
-    # thread's tracebacks.
-    with suppress_stderr():
-        cap = cv2.VideoCapture(0)
 
+    `frames` replaces the webcam, e.g. with a remote device's camera; it sets the pace.
+    """
     logger.info(f"capture loop started (detector {'on' if detect else 'off'})")
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-
+    for frame in camera() if frames is None else frames:
         if detect:
             closest_box, r = _process_frame(frame)
         else:
@@ -130,5 +138,3 @@ def run(trigger: threading.Event, detect: bool = True) -> Generator[tuple[np.nda
             trigger.clear()
             if capture is not None:
                 yield capture
-
-        cv2.waitKey(DELAY)

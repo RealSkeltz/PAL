@@ -11,6 +11,9 @@ about half a second of speech), Buddy stops (`self.cancel`). Other voices and
 noise don't stop it. What the user said is then routed as usual: answered if it
 was for Buddy, kept as context if not. A user turn that arrives while a reply
 is still being written, before any of it is heard, also cancels that reply.
+
+With `remote`, a remote device (the phone app) is PAL's ears, eyes and voice
+instead of this laptop's mic, webcam and speaker (see `pal.remote`).
 """
 import atexit
 import logging
@@ -56,7 +59,7 @@ AUTO_KNOWLEDGE_K = 3
 
 class Pal:
     def __init__(self, system_prompt: str | None = None, model: str | None = None,
-                 knowledge: list[Path] | None = None):
+                 knowledge: list[Path] | None = None, remote: bool = False):
         # `model` is a "provider:name" spec, e.g. "ollama:qwen3.5:9b"
         self.system_prompt = system_prompt or build_system_prompt()
         self.model = model or os.environ.get("PAL_MODEL", DEFAULT_MODEL)
@@ -72,7 +75,11 @@ class Pal:
         # Plumbing
         self.events: queue.Queue = queue.Queue()
         self.captures: queue.Queue = queue.Queue()
-        self.voice = Voice()
+        self.voice = Voice(local=not remote)
+        self.remote = None
+        if remote:
+            from pal.remote import Remote  # LiveKit only loads when it's used
+            self.remote = Remote(self.voice)
         self.cancel = threading.Event()
 
         self.idle = threading.Event()
@@ -97,8 +104,12 @@ class Pal:
         """Start the agent. `detect` toggles YOLO object detection on the camera."""
         self.detect = detect
         self.voice.start()
-        _thread(self._feed, self._text_input() if text_mode else listen.run(on_user_speaking=self._on_user_speaking))
-        _thread(self._feed_captures, see.run(self.vision_trigger, detect=self.detect))
+        if self.remote is not None:
+            self.remote.start()
+        hearing = listen.run(on_user_speaking=self._on_user_speaking, mic=self.remote is None)
+        frames = self.remote.frames(see.TARGET_FPS) if self.remote is not None else None
+        _thread(self._feed, self._text_input() if text_mode else hearing)
+        _thread(self._feed_captures, see.run(self.vision_trigger, detect=self.detect, frames=frames))
         _thread(self.router.run, self.events)
         _thread(self._respond_loop)
         _thread(self._warm_up)

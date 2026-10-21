@@ -9,6 +9,9 @@ heard. Every item carries a tag; `heard(tag)` is how many of that tag's words
 have played, estimated within a sentence by how far into its audio playback
 got. `stop()` cuts off immediately and freezes those counts, which is what a
 barge-in needs to record where PAL was interrupted.
+
+With `local=False` there is no sound card: another output (a remote device) pulls
+audio with `read` at its own pace, and `on_stop` lets it drop what it buffered.
 """
 import logging
 import queue
@@ -16,7 +19,7 @@ import threading
 import time as clock
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import Hashable
+from typing import Callable, Hashable
 
 import numpy as np
 import sounddevice as sd
@@ -38,7 +41,7 @@ class _Clip:
 
 
 class Voice:
-    def __init__(self, voice: str = "af_sky", speed: float = 1.2):
+    def __init__(self, voice: str = "af_sky", speed: float = 1.2, local: bool = True):
         self.voice = voice
         self.speed = speed
 
@@ -52,15 +55,17 @@ class Voice:
         self._lock = threading.Lock()
         self._idle = threading.Event()
         self._idle.set()
+        self.on_stop: Callable[[], None] | None = None  # called after stop(), e.g. to flush a remote buffer
 
         self._stream = sd.OutputStream(
             samplerate=SAMPLE_RATE, channels=1, dtype="float32",
             blocksize=1024, callback=self._fill,
-        )
+        ) if local else None
 
     def start(self):
         threading.Thread(target=self._synthesize, daemon=True).start()
-        self._stream.start()
+        if self._stream is not None:
+            self._stream.start()
 
     # --- Public ------------------------------------------------------------
 
@@ -81,6 +86,15 @@ class Voice:
             self._epoch += 1
             self._pending = 0
             self._idle.set()
+        if self.on_stop is not None:
+            self.on_stop()
+
+    def read(self, frames: int) -> np.ndarray:
+        """The next `frames` samples to play (silence when nothing is queued), for an output
+        other than the sound card."""
+        out = np.zeros((frames, 1), dtype=np.float32)
+        self._fill(out, frames, None, None)
+        return out[:, 0]
 
     def heard(self, tag: Hashable) -> int:
         with self._lock:

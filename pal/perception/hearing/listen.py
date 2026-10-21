@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import sounddevice as sd
 import numpy as np
@@ -129,12 +130,18 @@ def transcribe_audio(on_user_speaking):
             in_speech = False
             pending = None
 
-def run(on_user_speaking=lambda: None) -> Generator[Spoken, None, None]:
+def feed(chunk: np.ndarray):
+    """Audio from somewhere other than the laptop mic (a remote device): 512 samples of 16 kHz mono float32."""
+    audio_queue.put(chunk)
+
+def run(on_user_speaking=lambda: None, mic: bool = True) -> Generator[Spoken, None, None]:
     """Yield one Spoken event per utterance. `on_user_speaking` fires once per utterance,
-    as soon as enough speech has come in to recognise it as the user's voice."""
+    as soon as enough speech has come in to recognise it as the user's voice.
+    Without `mic`, the audio comes in through `feed` instead."""
     threading.Thread(target=transcribe_audio, args=(on_user_speaking,), daemon=True).start()
-    with sd.InputStream(samplerate=16000, channels=1, dtype='float32',
-                        blocksize=512, callback=callback):
+    stream = sd.InputStream(samplerate=16000, channels=1, dtype='float32',
+                            blocksize=512, callback=callback) if mic else contextlib.nullcontext()
+    with stream:
         while True:
             yield result_queue.get()
         

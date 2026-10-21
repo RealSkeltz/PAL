@@ -184,8 +184,9 @@ class Memory:
 
     def _sync_index(self):
         entries = [Entry(e.id, e.at, "event", line) for e in list(self.context) if (line := notes.event_line(e))]
-        entries += [Entry(t.id, at, "turn", notes.turn_line(t)) for t in list(self.history)
-                    if not _in_progress(t) and (at := notes.turn_time(t)) is not None]
+        # A reply cut off before its first word has no text; one empty input fails the whole embedding batch.
+        entries += [Entry(t.id, at, "turn", line) for t in list(self.history)
+                    if not _in_progress(t) and (at := notes.turn_time(t)) is not None and (line := notes.turn_line(t))]
         entries += [Entry(e.id, e.at, "episode", f"episode: {e.what}" + (f" (with {', '.join(e.who)})" if e.who else ""))
                     for e in self.episodic_memory.episodes]
         self.recall_index.add(entries)

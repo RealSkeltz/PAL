@@ -17,6 +17,8 @@ def main():
                         help="Extra reference material (.md/.txt file or folder) for this run, on top of data/knowledge/")
     parser.add_argument("--no-yolo", action="store_true",
                         help="Skip object detection; send the whole frame to the vision model")
+    parser.add_argument("--remote", action="store_true",
+                        help="Use a remote device (the phone app, over LiveKit) as mic, camera and speaker instead of this laptop")
     parser.add_argument("--verbose", action="store_true",
                         help="Show debug lines (timings) in the terminal too; the log file always has them")
     args = parser.parse_args()
@@ -32,7 +34,7 @@ def main():
         preview.start(port=args.preview_port)
         webbrowser.open(f"http://127.0.0.1:{args.preview_port}")
 
-    pal = Pal(knowledge=args.knowledge)
+    pal = Pal(knowledge=args.knowledge, remote=args.remote)
     pal.run(text_mode=args.text, detect=not args.no_yolo)
     try:
         threading.Event().wait()  # keep main thread alive
