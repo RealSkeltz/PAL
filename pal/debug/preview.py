@@ -1,8 +1,10 @@
 """Preview server: the camera feed and a live copy of the log, on localhost.
 
-The log side mirrors the terminal: every INFO line any module logs shows up
-here through `PreviewHandler`, so nothing has to report to the preview
-separately. Disabled unless `preview.start()` is called; until then every
+The camera image fills the page with what was said overlaid on it, next to a
+panel with the speaker score per utterance and the system log. The log mirrors
+the terminal: every INFO line any module logs shows up here through
+`PreviewHandler`, so nothing has to report to the preview separately; speech
+lines are tagged so they land on the image instead. Disabled unless `preview.start()` is called; until then every
 call is a no-op.
 """
 import json
@@ -20,50 +22,173 @@ HTML_PAGE = """<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>pal</title>
 <style>
-  body { margin: 0; padding: 8px; background: #000; color: #ccc; font: 13px/1.4 monospace; }
-  img { display: block; max-width: 640px; max-height: 45vh; margin-bottom: 8px; }
-  a { color: #ccc; }
-  #log { margin: 0; white-space: pre-wrap; }
+  :root {
+    --bg: #000; --panel: #1a1a19; --line: #383835;
+    --text: #f0efec; --muted: #c3c2b7; --faint: #8a8984;
+    --you: #3987e5; --other: #d95926;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--muted); font: 13px/1.4 monospace;
+         display: grid; grid-template-columns: 1fr 400px; }
+  a { color: var(--muted); }
+
+  #stage { position: relative; min-height: 0; overflow: hidden; }
+  #frame { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #subs { position: absolute; left: 0; right: 0; bottom: 0; padding: 48px 24px 20px;
+          background: linear-gradient(transparent, rgba(0,0,0,.85) 40%);
+          font: 18px/1.45 system-ui, sans-serif; color: var(--text); }
+  #subs div { margin-top: 4px; text-shadow: 0 1px 3px #000; }
+  #subs .who { display: inline-block; min-width: 3.5em; font: 12px monospace; color: var(--muted);
+               border-left: 4px solid var(--faint); padding-left: 6px; margin-right: 8px; }
+  #subs .user .who { border-color: var(--you); }
+  #subs .other .who { border-color: var(--other); }
+  #subs .pal .who { border-color: var(--text); }
+
+  #side { display: flex; flex-direction: column; min-height: 0; background: var(--panel);
+          border-left: 1px solid var(--line); }
+  #side header { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  #score { padding: 12px; border-bottom: 1px solid var(--line); }
+  #score h2 { margin: 0 0 2px; font-size: 13px; font-weight: normal; color: var(--text); }
+  #latest { font-size: 28px; color: var(--text); }
+  #latest small { font-size: 13px; color: var(--muted); }
+  .legend { color: var(--muted); margin: 4px 0 6px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 10px;
+              vertical-align: -1px; }
+  .legend i:first-child { margin-left: 0; }
+  #chart { width: 100%; height: 150px; display: block; }
+  #chart text { fill: var(--faint); font: 10px monospace; }
+  #tip { position: fixed; pointer-events: none; display: none; max-width: 280px; padding: 6px 8px;
+         background: #000; border: 1px solid var(--line); border-radius: 4px; color: var(--text); }
+  #log { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 8px 12px; white-space: pre-wrap; }
+
+  @media (max-width: 800px) {
+    body { grid-template-columns: 1fr; grid-template-rows: 55vh auto; height: auto; }
+    #subs { font-size: 15px; padding: 32px 16px 12px; }
+    #side { border-left: 0; }
+    #log { max-height: 50vh; }
+  }
 </style>
 </head>
 <body>
-<div>pal preview -- <span id="status">disconnected</span> -- <a href="#" id="clear">clear</a></div>
-<img id="frame" alt="">
-<pre id="log"></pre>
+<div id="stage">
+  <img id="frame" alt="">
+  <div id="subs"></div>
+</div>
+<aside id="side">
+  <header>pal -- <span id="status">disconnected</span> -- <a href="#" id="clear">clear</a></header>
+  <section id="score">
+    <h2>Speaker score per utterance</h2>
+    <div id="latest">--</div>
+    <div class="legend"><i style="background:var(--you)"></i>you <i style="background:var(--other)"></i>other
+      <span style="margin-left:10px">--- threshold</span></div>
+    <svg id="chart" role="img" aria-label="Speaker score per utterance"></svg>
+  </section>
+  <pre id="log"></pre>
+</aside>
+<div id="tip"></div>
 <script>
-  const log = document.getElementById('log');
-  const status = document.getElementById('status');
-  const frame = document.getElementById('frame');
+  const $ = (id) => document.getElementById(id);
+  const log = $('log'), subs = $('subs'), chart = $('chart'), tip = $('tip');
+  const MAX_SUBS = 6, MAX_BARS = 40;
+  let utterances = [];
 
   setInterval(() => {
     const img = new Image();
-    img.onload = () => { frame.src = img.src; };
+    img.onload = () => { $('frame').src = img.src; };
     img.src = '/frame.jpg?t=' + Date.now();
   }, 100);
 
-  function append(line) {
-    const atBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 4;
+  function addLine(line) {
+    const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
     log.textContent += line + '\\n';
     const lines = log.textContent.split('\\n');
     if (lines.length > 2000) log.textContent = lines.slice(-2000).join('\\n');
-    if (atBottom) window.scrollTo(0, document.body.scrollHeight);
+    if (atBottom) log.scrollTop = log.scrollHeight;
   }
 
-  document.getElementById('clear').onclick = (e) => {
+  function addSpeech({ who, text }) {
+    const row = document.createElement('div');
+    row.className = who;
+    const label = document.createElement('span');
+    label.className = 'who';
+    label.textContent = who === 'user' ? 'you' : who;
+    row.append(label, text);
+    subs.append(row);
+    while (subs.children.length > MAX_SUBS) subs.firstChild.remove();
+    [...subs.children].forEach((el, i, all) => { el.style.opacity = 0.35 + 0.65 * (i + 1) / all.length; });
+  }
+
+  function addUtterance(u) {
+    utterances.push(u);
+    if (utterances.length > MAX_BARS) utterances.shift();
+    $('latest').innerHTML = u.score.toFixed(2) + ' <small>' + (u.is_user ? 'you' : 'other') +
+      ', ' + u.seconds.toFixed(1) + 's</small>';
+    drawChart();
+  }
+
+  function drawChart() {
+    const w = chart.clientWidth, h = chart.clientHeight, left = 26, top = 6, bottom = 4;
+    const plotH = h - top - bottom, y = (v) => top + plotH * (1 - Math.max(0, Math.min(1, v)));
+    const slot = (w - left) / MAX_BARS, bar = Math.max(2, slot - 2);
+    const ns = 'http://www.w3.org/2000/svg';
+    const el = (name, attrs) => { const n = document.createElementNS(ns, name);
+      for (const k in attrs) n.setAttribute(k, attrs[k]); return n; };
+    chart.replaceChildren();
+    for (const v of [0, 0.5, 1]) {
+      chart.append(el('line', { x1: left, x2: w, y1: y(v), y2: y(v), stroke: '#383835' }));
+      const label = el('text', { x: left - 4, y: y(v) + 3, 'text-anchor': 'end' });
+      label.textContent = v.toFixed(1);
+      chart.append(label);
+    }
+    const threshold = utterances.length ? utterances[utterances.length - 1].threshold : 0.5;
+    utterances.forEach((u, i) => {
+      const x = left + i * slot + 1, top_ = y(u.score);
+      const height = Math.max(1, y(0) - top_);
+      chart.append(el('rect', { x, y: top_, width: bar, height, rx: Math.min(2, bar / 2),
+        fill: u.is_user ? 'var(--you)' : 'var(--other)' }));
+      const hit = el('rect', { x: x - 1, y: top, width: slot, height: plotH, fill: 'transparent' });
+      hit.onmousemove = (e) => {
+        tip.style.display = 'block';
+        tip.style.left = Math.min(e.clientX + 12, innerWidth - 290) + 'px';
+        tip.style.top = (e.clientY + 12) + 'px';
+        tip.textContent = u.score.toFixed(2) + ' -> ' + (u.is_user ? 'you' : 'other') + ' (' +
+          u.seconds.toFixed(1) + 's)\\n' + u.text;
+        tip.style.whiteSpace = 'pre-wrap';
+      };
+      hit.onmouseleave = () => { tip.style.display = 'none'; };
+      chart.append(hit);
+    });
+    chart.append(el('line', { x1: left, x2: w, y1: y(threshold), y2: y(threshold),
+      stroke: '#c3c2b7', 'stroke-dasharray': '4 3', 'pointer-events': 'none' }));
+  }
+  addEventListener('resize', drawChart);
+  drawChart();
+
+  function clearAll() {
+    log.textContent = ''; subs.replaceChildren(); utterances = [];
+    $('latest').textContent = '--'; drawChart();
+  }
+
+  $('clear').onclick = (e) => {
     e.preventDefault();
     fetch('/reset', { method: 'POST' });
-    log.textContent = '';
+    clearAll();
   };
 
   function connect() {
     const es = new EventSource('/events');
-    es.onopen = () => { status.textContent = 'connected'; };
-    es.onerror = () => { status.textContent = 'disconnected'; es.close(); setTimeout(connect, 1000); };
+    es.onopen = () => { $('status').textContent = 'connected'; };
+    es.onerror = () => { $('status').textContent = 'disconnected'; es.close(); setTimeout(connect, 1000); };
     es.onmessage = (e) => {
       const msg = JSON.parse(e.data);
-      if (msg.reset) log.textContent = ''; else append(msg.line);
+      if (msg.reset) clearAll();
+      else if (msg.speech) addSpeech(msg.speech);
+      else if (msg.utterance) addUtterance(msg.utterance);
+      else addLine(msg.line);
     };
   }
   connect();
@@ -116,11 +241,17 @@ class PreviewServer:
             logger.warning(f"frame encode failed: {e}")
 
     def add_line(self, line: str):
-        if not self._enabled:
-            return
-        message = self._encode({"line": line})
-        self._history.append(message)
-        self._broadcast(message)
+        """A system line for the log panel."""
+        self._push({"line": line})
+
+    def add_speech(self, who: str, text: str):
+        """Something said, by "user", "other" or "pal": shown over the camera image."""
+        self._push({"speech": {"who": who, "text": text}})
+
+    def add_utterance(self, score: float, threshold: float, is_user: bool, seconds: float, text: str):
+        """One bar in the speaker score chart."""
+        self._push({"utterance": {"score": score, "threshold": threshold, "is_user": is_user,
+                                  "seconds": seconds, "text": text}})
 
     def reset(self):
         """Clear server history and tell connected clients to clear."""
@@ -130,6 +261,13 @@ class PreviewServer:
         self._broadcast(self._encode({"reset": True}))
 
     # ----- internals -----
+
+    def _push(self, payload: dict):
+        if not self._enabled:
+            return
+        message = self._encode(payload)
+        self._history.append(message)
+        self._broadcast(message)
 
     @staticmethod
     def _encode(payload: dict) -> bytes:
@@ -232,10 +370,15 @@ preview = PreviewServer()
 
 
 class PreviewHandler(logging.Handler):
-    """Sends formatted log lines to the preview page."""
+    """Sends formatted log lines to the preview page. A record logged with
+    `extra={"speech": (who, text)}` goes over the camera image instead of the log panel."""
 
     def emit(self, record):
         try:
-            preview.add_line(self.format(record))
+            speech = getattr(record, "speech", None)
+            if speech:
+                preview.add_speech(*speech)
+            else:
+                preview.add_line(self.format(record))
         except Exception:
             self.handleError(record)

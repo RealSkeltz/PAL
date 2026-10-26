@@ -51,7 +51,7 @@ def respond(
         if cancel.is_set():
             return  # cut off; don't start a new sentence after the voice was stopped
         first_sentence = first_sentence or time.time()
-        logger.info(f"said: {text}")
+        logger.info(f"said: {text}", extra={"speech": ("pal", text)})
         voice.say(text, tag=(reply_id, step))
 
     for turn in user_turns:

@@ -11,6 +11,7 @@ from pal.config import VOICEPRINTS_DIR
 from pal.schemas.event import Actor, Role, Spoken
 from pal.perception.hearing.whisper_prompt import WHISPER_PROMPT
 
+from pal.debug.preview import preview
 from pal.debug.timing import timed
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,7 @@ def transcribe_audio(on_user_speaking):
             if speech_chunks >= MIN_SPEECH_CHUNKS:
                 text, is_user, score, duration = pending.result() if pending is not None else process(speech_audio())
                 if text:
+                    preview.add_utterance(score, SPEAKER_THRESHOLD, is_user, duration, text)
                     transcript[chunk_id] = text
                     chunk_id += 1
                     result_queue.put(Spoken(

@@ -48,7 +48,7 @@ class EventRouter:
             self.memory.add_event(event)
             return
 
-        logger.info(f"heard {event.actor.value}: {event.text!r}")
+        logger.info(f"heard {event.actor.value}: {event.text!r}", extra={"speech": (event.actor.value, event.text)})
 
         if event.actor is not Actor.USER:
             self.memory.add_event(event)
