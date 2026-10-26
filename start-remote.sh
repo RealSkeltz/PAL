@@ -20,12 +20,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-wait_for_port() {  # port, name
+wait_for_port() {  # host, port, name
     for _ in $(seq 1 50); do
-        nc -z 127.0.0.1 "$1" 2>/dev/null && return 0
+        nc -z "$1" "$2" 2>/dev/null && return 0
         sleep 0.2
     done
-    echo "$2 didn't come up on port $1" >&2
+    echo "$3 didn't come up on $1:$2" >&2
     exit 1
 }
 
@@ -33,33 +33,38 @@ wait_for_port() {  # port, name
 tailscale_cli=$(command -v tailscale || echo /Applications/Tailscale.app/Contents/MacOS/Tailscale)
 if [ -x "$tailscale_cli" ] && ip=$("$tailscale_cli" ip -4 2>/dev/null) && [ -n "$ip" ]; then
     network="Tailscale"
+    # Listen only on the Tailscale address: others on the same Wi-Fi can't join the room
+    listen="$ip"
 else
     ip=$(ipconfig getifaddr en0 || true)
     network="Wi-Fi"
+    listen="0.0.0.0"
 fi
 if [ -z "$ip" ]; then
     echo "No network address found (no Tailscale, no Wi-Fi)" >&2
     exit 1
 fi
+local_check=$([ "$listen" = "0.0.0.0" ] && echo 127.0.0.1 || echo "$listen")
 
 if [[ "${PAL_MODEL:-ollama:}" == ollama:* ]] && ! nc -z 127.0.0.1 11434 2>/dev/null; then
     echo "Starting Ollama"
     ollama serve >/dev/null 2>&1 &
     started+=($!)
-    wait_for_port 11434 Ollama
+    wait_for_port 127.0.0.1 11434 Ollama
 fi
 
-if nc -z 127.0.0.1 7880 2>/dev/null; then
-    echo "livekit-server already running, reusing it"
+if nc -z 127.0.0.1 7880 2>/dev/null || nc -z "$local_check" 7880 2>/dev/null; then
+    echo "livekit-server already running, reusing it (it keeps the addresses it was started with)"
 else
-    echo "Starting livekit-server (log: $LIVEKIT_LOG)"
-    livekit-server --dev --bind 0.0.0.0 --node-ip "$ip" >"$LIVEKIT_LOG" 2>&1 &
+    echo "Starting livekit-server on $listen (log: $LIVEKIT_LOG)"
+    livekit-server --dev --bind "$listen" --node-ip "$ip" >"$LIVEKIT_LOG" 2>&1 &
     started+=($!)
-    wait_for_port 7880 livekit-server
+    wait_for_port "$local_check" 7880 livekit-server
 fi
 
 echo
 echo "  In the phone app, connect to: $ip  ($network)"
 echo
 
-poetry run python main.py --remote --preview "$@"
+LIVEKIT_URL="${LIVEKIT_URL:-ws://$local_check:7880}" PAL_TOKEN_HOST="$listen" \
+    poetry run python main.py --remote --preview "$@"

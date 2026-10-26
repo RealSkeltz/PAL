@@ -39,6 +39,7 @@ API_SECRET = os.environ.get("LIVEKIT_API_SECRET", "secret")
 ROOM = "pal"
 IDENTITY = "pal"
 TOKEN_PORT = 8000
+TOKEN_HOST = os.environ.get("PAL_TOKEN_HOST", "0.0.0.0")
 
 MIC_RATE = 16000
 MIC_CHUNK_MS = 32  # 512 samples at 16 kHz: what the VAD takes
@@ -201,6 +202,6 @@ class Remote:
                 self.wfile.write(body)
                 logger.info(f"handed out a room token to {identity}")
 
-        server = ThreadingHTTPServer(("0.0.0.0", self.token_port), Handler)
-        logger.info(f"token endpoint on port {self.token_port}")
+        server = ThreadingHTTPServer((TOKEN_HOST, self.token_port), Handler)
+        logger.info(f"token endpoint on {TOKEN_HOST}:{self.token_port}")
         server.serve_forever()

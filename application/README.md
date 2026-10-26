@@ -17,6 +17,8 @@ All the server-side logic lives in `pal/remote.py`; this folder only holds the c
 Shortcut: `./start-remote.sh` from the repo root does all of the below in one go. It
 uses the Tailscale IP when Tailscale is installed and the Wi-Fi IP otherwise, starts
 Ollama if needed, prints the address to type into the app, and stops everything on Ctrl+C.
+With Tailscale, LiveKit and the token endpoint listen only on the Tailscale address
+(`PAL_TOKEN_HOST`, `LIVEKIT_URL`), so others on the same Wi-Fi can't join the room.
 Extra arguments go to `main.py`, e.g. `./start-remote.sh --verbose`. By hand:
 
 ```bash
