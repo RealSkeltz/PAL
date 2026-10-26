@@ -124,13 +124,14 @@ def event_line(event: Event) -> str | None:
             return f"user (not to Buddy): {event.text}"
         return f"someone else: {event.text}"
     if isinstance(event, Observation):
-        return f"camera: {event.description}"
+        # A look's older frames carry no description of their own; it's on the newest one
+        return f"camera: {event.description}" if event.description else None
     return None
 
 
 def turn_line(turn: ConversationTurn) -> str:
     if isinstance(turn, UserTurn):
-        seen = "".join(f" [camera: {o.description}]" for o in turn.attachments)
+        seen = "".join(f" [camera: {o.description}]" for o in turn.attachments if o.description)
         return f"user to Buddy: {turn.utterance.text}{seen}"
     parts = [f"Buddy used {a.tool}({a.args}) -> {a.result}" for a in turn.actions]
     if turn.spoken_text:

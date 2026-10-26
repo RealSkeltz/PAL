@@ -31,6 +31,7 @@ from pal.llm import get_client
 from pal.config import CAPTURES_DIR, KNOWLEDGE_DIR
 from pal.perception.hearing import listen
 from pal.perception.vision import see
+from pal.perception.vision.describe import describe
 from pal.response.prompt import build_system_prompt
 from pal.response.responder import respond
 from pal.routing.router import EventRouter
@@ -76,6 +77,7 @@ class Pal:
         # Plumbing
         self.events: queue.Queue = queue.Queue()
         self.captures: queue.Queue = queue.Queue()
+        self._looks: queue.Queue = queue.Queue()  # (question, frames) waiting to be described
         self.voice = Voice(local=not remote)
         self.remote = None
         if remote:
@@ -116,6 +118,7 @@ class Pal:
         _thread(self._warm_up)
         _thread(self.memory.watch, lambda: self._responding or self.voice.busy)
         _thread(self.memory.index_loop)
+        _thread(self._describe_loop)
         _thread(self.memory.knowledge.load, [KNOWLEDGE_DIR, *self.knowledge_paths])
         atexit.register(self._release)
         logger.info("all threads started")
@@ -150,13 +153,16 @@ class Pal:
         for frames in captures:
             observations = []
             for image, label, conf, taken_at in frames:
+                # A detector label says what it found; a whole scene gets its description once
+                # it has been looked at (_describe_loop), on the newest frame.
+                description = f"{label} in view" if label != "scene" else ""
                 capture_id = uuid4()
                 path = CAPTURES_DIR / f"{capture_id}.jpg"
                 cv2.imwrite(str(path), image)
                 observation = Observation(
                     id=capture_id, actor=Actor.PAL, role=Role.CONTEXT,
                     at=datetime.fromtimestamp(taken_at, timezone.utc),
-                    description=f"{label} in view", label=label, confidence=conf,
+                    description=description, label=label, confidence=conf,
                     image_path=str(path),
                 )
                 record("capture", observation)
@@ -165,6 +171,25 @@ class Pal:
             self.captures.put(observations)
             logger.info(f"captured {len(frames)} frame(s): {frames[-1][1]} ({frames[-1][2]:.2f})")
 
+    def _describe_loop(self):
+        """Put each look into words for memory, after the reply it was taken for, so it never
+        competes with one. Meant for its own thread."""
+        while True:
+            question, frames = self._looks.get()
+            while self._responding:
+                time.sleep(0.5)
+            start = time.time()
+            try:
+                description = describe(self.client, frames, question)
+            except Exception:
+                logger.exception("describing what was seen failed")
+                continue
+            if not description:
+                continue
+            self.memory.describe_look(frames, description)
+            record("look_described", {"frames": [str(o.id) for o in frames], "description": description})
+            logger.info(f"seen ({time.time() - start:.1f}s): {description}")
+
     def _on_user_speaking(self):
         if self.voice.busy:
             logger.info("barge-in: user started speaking, stopping")
@@ -172,6 +197,8 @@ class Pal:
             self.voice.stop()
 
     def _on_user_turn(self, turn: UserTurn):
+        if turn.attachments:
+            self._looks.put((turn.utterance.text, list(turn.attachments)))
         if self._responding:
             logger.info("barge-in: cutting off the current reply")
             self.cancel.set()

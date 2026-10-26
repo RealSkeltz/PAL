@@ -17,6 +17,7 @@ as talking to Buddy; their remarks are simply batched into the next update.
 """
 import logging
 import time
+from dataclasses import replace
 from typing import Callable
 
 from pal.llm.base import LLMClient
@@ -30,7 +31,7 @@ from pal.memory.knowledge import Knowledge
 from pal.memory.recall import Entry, Hit, RecallIndex, format_hits
 from pal.llm.embedding_client import EmbeddingClient
 from pal.schemas.episode import EpisodicMemory
-from pal.schemas.event import Event
+from pal.schemas.event import Event, Observation
 from pal.schemas.goals import GoalMemory, Status
 from pal.schemas.situation import Situation
 from pal.schemas.turn import ConversationTurn, Delivery, Response, UserTurn
@@ -71,6 +72,21 @@ class Memory:
     def add_turn(self, turn: ConversationTurn):
         self.history.append(turn)
         self._last_interaction = time.time()
+
+    def describe_look(self, frames: list[Observation], description: str):
+        """Fill in what a look showed, once it has been put into words. It goes on the look's newest
+        frame, both in the context and on the turn that asked, and that frame is taken in again by
+        every memory, since one that already took it in only saw an empty description."""
+        described = replace(frames[-1], description=description)
+        for i, e in enumerate(self.context):  # in place: the router may be appending meanwhile
+            if e.id == described.id:
+                self.context[i] = described
+                break
+        for turn in self.history:
+            if isinstance(turn, UserTurn) and any(o.id == described.id for o in turn.attachments):
+                turn.attachments = [described if o.id == described.id else o for o in turn.attachments]
+        for seen in self._summarized.values():
+            seen.discard(described.id)
 
     def pending(self) -> list[UserTurn]:
         """User turns nobody has started answering yet."""

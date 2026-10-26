@@ -1,11 +1,12 @@
 """Convert PAL's conversation history into the wire turns a client sends.
 
 History is kept whole; everything that only exists to fit a model's context
-(dropping old turns, sending images for the latest user turn only) happens
+(dropping old turns, sending images only for the latest look while it's recent) happens
 here, on the way out. A user turn's automatic recall goes out with it every
 time, so a later reply sees what an earlier one was based on.
 """
 import base64
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pal.llm.base import ToolCall, Turn
@@ -13,6 +14,10 @@ from pal.schemas.event import Action
 from pal.schemas.turn import ConversationTurn, Delivery, UserTurn
 
 MAX_TURNS = 20
+# The latest look's images stay with the conversation this long, so a follow-up about what was
+# just seen ("and the colour?") can still be answered without looking again. After that, or once a
+# newer look replaces it, only its description goes along.
+RECENT_LOOK_SECONDS = 120
 
 
 def to_client_turns(history: list[ConversationTurn], max_turns: int = MAX_TURNS) -> list[Turn]:
@@ -23,14 +28,17 @@ def to_client_turns(history: list[ConversationTurn], max_turns: int = MAX_TURNS)
     window = history[start:]
 
     last_user = max((i for i, t in enumerate(window) if isinstance(t, UserTurn)), default=None)
+    last_look = max((i for i, t in enumerate(window) if isinstance(t, UserTurn) and _frames(t)), default=None)
+    now = datetime.now(timezone.utc)
 
     turns = []
     for i, turn in enumerate(window):
         if isinstance(turn, UserTurn):
-            frames = [o for o in turn.attachments if o.image_path]
+            frames = _frames(turn)
             current = i == last_user
-            images = [_load_image(o.image_path) for o in frames] if current else []
-            text = _frame_notes(frames, current) + _recall_note(turn.recalled) + turn.utterance.text
+            shown = i == last_look and (current or (now - frames[-1].at).total_seconds() <= RECENT_LOOK_SECONDS)
+            images = [_load_image(o.image_path) for o in frames] if shown else []
+            text = _frame_notes(frames, current, shown) + _recall_note(turn.recalled) + turn.utterance.text
             turns.append(Turn(role="user", text=text, images=images))
             continue
 
@@ -43,17 +51,24 @@ def to_client_turns(history: list[ConversationTurn], max_turns: int = MAX_TURNS)
     return turns
 
 
-def _frame_notes(frames: list, current: bool) -> str:
+def _frames(turn: UserTurn) -> list:
+    return [o for o in turn.attachments if o.image_path]
+
+
+def _frame_notes(frames: list, current: bool, shown: bool) -> str:
     """Say when the attached images were seen, so a new view isn't mistaken for a contradiction of
     an old one. Worded as seeing, not as frames: the reply should talk the same way."""
     if not frames:
         return ""
     times = [f"{o.at.astimezone():%H:%M:%S.%f}"[:-5] for o in frames]
     when = times[0] if len(times) == 1 else f"{times[0]} to {times[-1]}, oldest first"
-    if current:
+    if shown and current:
         return f"[What you see as the user says this ({when}). Not a request to describe it.]\n"
-    return (f"[You saw what was in front of the user when they said this ({when}). You no longer see it, "
-            "but your answer was based on seeing it.]\n")
+    if shown:
+        return f"[What you saw when the user said this ({when}); still with you for follow-up questions.]\n"
+    seen = " ".join(dict.fromkeys(o.description for o in frames if o.description))
+    return (f"[You saw what was in front of the user when they said this ({when})"
+            + (f": {seen}" if seen else "") + ". You no longer see it, but your answer was based on seeing it.]\n")
 
 
 def _recall_note(recalled: str) -> str:
