@@ -14,6 +14,11 @@ All the server-side logic lives in `pal/remote.py`; this folder only holds the c
 
 ## 1. Server (laptop)
 
+Shortcut: `./start-remote.sh` from the repo root does all of the below in one go. It
+uses the Tailscale IP when Tailscale is installed and the Wi-Fi IP otherwise, starts
+Ollama if needed, prints the address to type into the app, and stops everything on Ctrl+C.
+Extra arguments go to `main.py`, e.g. `./start-remote.sh --verbose`. By hand:
+
 ```bash
 brew install livekit
 livekit-server --dev --bind 0.0.0.0 --node-ip "$(tailscale ip -4)"
@@ -68,6 +73,10 @@ In `app/build.gradle.kts`, inside `dependencies { ... }`, add:
 ```kotlin
 implementation("io.livekit:livekit-android:2.+")   // pin to the version Gradle resolves once it works
 implementation("androidx.lifecycle:lifecycle-service:2.8.7")
+// USB chest camera: the Pixel doesn't expose USB cameras through Camera2, so AUSBC
+// reads them over raw USB. libuvc is listed too because its types appear in AUSBC's API.
+implementation("com.github.ernestp.AndroidUSBCamera:libausbc:3.6.0")
+implementation("com.github.ernestp.AndroidUSBCamera:libuvc:3.6.0")
 ```
 
 Also check that `minSdk = 31` in the same file. Sync Gradle.
@@ -80,6 +89,7 @@ Copy from `client/` into the project's `app/src/main/`:
 - `MainActivity.kt` → `java/nl/pal/client/MainActivity.kt` (replaces the generated one)
 - `PalService.kt` → `java/nl/pal/client/PalService.kt`
 - `PalState.kt` → `java/nl/pal/client/PalState.kt`
+- `UvcCapturer.kt` → `java/nl/pal/client/UvcCapturer.kt`
 
 The template's `ui/theme` folder can stay; it's just unused.
 
@@ -97,6 +107,8 @@ The template's `ui/theme` folder can stay; it's just unused.
    Bluetooth and notification permissions.
 1. You should hear a chime in the earpiece, and PAL's log shows `device joined`,
    `hearing ...'s mic` and `seeing ...'s camera`.
+1. With the USB camera plugged in, the app asks for access to it and logs
+   `Using the USB camera`. Without one it falls back to the phone's back camera.
 1. Talk to PAL as usual; it answers in the earpiece.
 1. **Ping PAL** should come back as `{"type":"pong",...}` in the app's log.
 1. Lock the screen: the notification stays and streaming continues.
@@ -114,5 +126,12 @@ The template's `ui/theme` folder can stay; it's just unused.
 - **PAL hears you but never treats it as you:** the voiceprint was enrolled on the
   laptop mic, and a Bluetooth earpiece sounds different. Re-enroll through the earpiece
   if speaker scores stay low (they're in PAL's log).
+- **App sometimes crashes when disconnecting with the USB camera on:** known bug in
+  AUSBC's bundled libuvc (`pthread_mutex_lock called on a destroyed mutex`): stopping the
+  stream frees it while a USB transfer is still completing. Streaming itself isn't affected;
+  reopen the app. Upstream: https://github.com/ernestp/AndroidUSBCamera/issues/10
+- **USB camera feed slows to a few fps:** cheap UVC cameras lower their frame rate in dim
+  light, and loose cables or low power make the camera drop off USB. Try better light or a
+  powered USB-C hub.
 - **Build errors on LiveKit classes:** SDK APIs shift slightly between versions.
   Check the LiveKit Android SDK docs for the version Gradle resolved.

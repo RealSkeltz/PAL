@@ -113,8 +113,7 @@ class PalService : LifecycleService() {
 
             newRoom.connect("ws://$host:7880", token)
             newRoom.localParticipant.setMicrophoneEnabled(true)
-            newRoom.localParticipant.setCameraEnabled(true)
-            // Later: replace the phone camera with the UVC chest camera via a custom capturer.
+            publishCamera(newRoom)
 
             PalState.status.value = "Live"
             PalState.log("Connected to $host")
@@ -123,6 +122,20 @@ class PalService : LifecycleService() {
             PalState.log("Error: ${e.message}")
             stopSelf()
         }
+    }
+
+    /** The USB chest camera when one is plugged in, otherwise the phone's back camera. */
+    private suspend fun publishCamera(room: Room) {
+        val device = UvcCapturer.findCamera(this)
+        if (device == null || !UvcCapturer.requestPermission(this, device)) {
+            room.localParticipant.setCameraEnabled(true)
+            PalState.log("Using the phone camera")
+            return
+        }
+        val track = room.localParticipant.createVideoTrack("usb-camera", UvcCapturer(applicationContext, device))
+        track.startCapture()
+        room.localParticipant.publishVideoTrack(track)
+        PalState.log("Using the USB camera")
     }
 
     private fun handleServerEvent(json: String) {
