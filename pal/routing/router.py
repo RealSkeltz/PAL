@@ -4,23 +4,26 @@ Language from the user that is meant for PAL becomes a UserTurn in the
 history; everything else is context. Typed input is direct by nature. Speech
 is direct when it names PAL or comes right after PAL spoke; only when neither
 holds does the model gate decide. The same gate call decides whether the
-answer needs the camera, and only then is a frame captured and attached.
+answer needs the camera, and only then are frames attached: from when the
+user started talking up to now, since that's what they were looking at.
 """
 import logging
 import queue
-import threading
 from dataclasses import replace
 from typing import Callable
 
 from pal.routing.gate import addressed_by_name, assess, within_conversation_window
 from pal.log import record
 from pal.memory import Memory
-from pal.schemas.event import Actor, Event, Language, Observation, Role
+from pal.schemas.event import Actor, Event, Language, Observation, Role, Spoken
 from pal.schemas.turn import UserTurn
 
 logger = logging.getLogger(__name__)
 
 CAPTURE_WAIT_SECONDS = 1.0
+# Silence after speech before an utterance counts as finished (listen.COMMIT_AFTER;
+# not imported, since importing listen loads the speech models).
+UTTERANCE_TAIL_SECONDS = 0.5
 
 
 class EventRouter:
@@ -28,13 +31,13 @@ class EventRouter:
         self,
         memory: Memory,
         captures: queue.Queue,
-        vision_trigger: threading.Event,
+        look_requests: queue.Queue,
         on_user_turn: Callable[[UserTurn], None],
         last_spoke_at: Callable[[], float],
     ):
         self.memory = memory
         self.captures = captures
-        self.vision_trigger = vision_trigger
+        self.look_requests = look_requests
         self.on_user_turn = on_user_turn
         self.last_spoke_at = last_spoke_at
 
@@ -60,7 +63,7 @@ class EventRouter:
             return
 
         event = replace(event, role=Role.DIRECT)
-        turn = UserTurn(utterance=event, attachments=self._attachments(look))
+        turn = UserTurn(utterance=event, attachments=self._attachments(look, _started_at(event)))
         self.memory.add_turn(turn)
         self.on_user_turn(turn)
 
@@ -97,25 +100,35 @@ class EventRouter:
         })
         return speak, look
 
-    def _attachments(self, look: bool) -> list[Observation]:
-        """A fresh camera frame when the gate says the answer needs one."""
+    def _attachments(self, look: bool, since: float) -> list[Observation]:
+        """Camera frames from `since` to now when the gate says the answer needs them."""
         self._drain_captures()  # older captures are context, not this question's subject
         if not look:
             return []
-        self.vision_trigger.set()
+        self.look_requests.put(since)
         try:
-            capture = self.captures.get(timeout=CAPTURE_WAIT_SECONDS)
+            frames = self.captures.get(timeout=CAPTURE_WAIT_SECONDS)
         except queue.Empty:
             logger.info("camera triggered but no image arrived")
             return []
-        self.memory.add_event(capture)
-        return [capture]
+        for frame in frames:
+            self.memory.add_event(frame)
+        return frames
 
-    def _drain_captures(self) -> Observation | None:
-        latest = None
+    def _drain_captures(self):
         while True:
             try:
-                latest = self.captures.get_nowait()
+                frames = self.captures.get_nowait()
             except queue.Empty:
-                return latest
-            self.memory.add_event(latest)
+                return
+            for frame in frames:
+                self.memory.add_event(frame)
+
+
+def _started_at(event: Language) -> float:
+    """When the user started saying this, in epoch seconds. Events are made once the
+    utterance is finished; typed text has no duration, so it started when it arrived."""
+    started = event.at.timestamp()
+    if isinstance(event, Spoken) and event.duration_s:
+        started -= event.duration_s + UTTERANCE_TAIL_SECONDS
+    return started

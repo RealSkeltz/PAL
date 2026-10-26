@@ -1,7 +1,7 @@
 """Wires PAL together. Each stage runs on its own thread:
 
     senses ──► events ──► router ──► memory ──► responder ──► voice
-                  camera ──► captures ──┘ (attached to user turns)
+                  camera ──► captures ──┘ (frames attached to user turns)
 
 The router only appends user turns and wakes the responder; the responder
 answers every pending user turn at once.
@@ -21,6 +21,7 @@ import os
 import queue
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -89,12 +90,12 @@ class Pal:
         self._responding = False
 
         # Controls
-        self.vision_trigger = threading.Event()
+        self.look_requests: queue.Queue = queue.Queue()  # when each question started; see.run answers
         self.detect = False  # YOLO off by default; run(detect=True) turns it on
 
         self.tool_handler = BuiltinTools(self)
         self.router = EventRouter(
-            self.memory, self.captures, self.vision_trigger,
+            self.memory, self.captures, self.look_requests,
             on_user_turn=self._on_user_turn,
             last_spoke_at=lambda: self.last_spoke_at,
         )
@@ -109,7 +110,7 @@ class Pal:
         hearing = listen.run(on_user_speaking=self._on_user_speaking, mic=self.remote is None)
         frames = self.remote.frames(see.TARGET_FPS) if self.remote is not None else None
         _thread(self._feed, self._text_input() if text_mode else hearing)
-        _thread(self._feed_captures, see.run(self.vision_trigger, detect=self.detect, frames=frames))
+        _thread(self._feed_captures, see.run(self.look_requests, detect=self.detect, frames=frames))
         _thread(self.router.run, self.events)
         _thread(self._respond_loop)
         _thread(self._warm_up)
@@ -145,19 +146,24 @@ class Pal:
             self.events.put(event)
 
     def _feed_captures(self, captures):
-        for crop, label, conf in captures:
-            self.last_image = crop
-            capture_id = uuid4()
-            path = CAPTURES_DIR / f"{capture_id}.jpg"
-            cv2.imwrite(str(path), crop)
-            observation = Observation(
-                id=capture_id, actor=Actor.PAL, role=Role.CONTEXT,
-                description=f"{label} in view", label=label, confidence=conf,
-                image_path=str(path),
-            )
-            record("capture", observation)
-            self.captures.put(observation)
-            logger.info(f"captured {label} ({conf:.2f})")
+        """One look's frames become one list of observations, oldest first."""
+        for frames in captures:
+            observations = []
+            for image, label, conf, taken_at in frames:
+                capture_id = uuid4()
+                path = CAPTURES_DIR / f"{capture_id}.jpg"
+                cv2.imwrite(str(path), image)
+                observation = Observation(
+                    id=capture_id, actor=Actor.PAL, role=Role.CONTEXT,
+                    at=datetime.fromtimestamp(taken_at, timezone.utc),
+                    description=f"{label} in view", label=label, confidence=conf,
+                    image_path=str(path),
+                )
+                record("capture", observation)
+                observations.append(observation)
+            self.last_image = frames[-1][0]
+            self.captures.put(observations)
+            logger.info(f"captured {len(frames)} frame(s): {frames[-1][1]} ({frames[-1][2]:.2f})")
 
     def _on_user_speaking(self):
         if self.voice.busy:

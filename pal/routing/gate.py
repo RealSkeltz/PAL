@@ -15,7 +15,7 @@ CONVERSATION_WINDOW_SECONDS = 10  # counted from when Buddy finished speaking; f
 # Choices that count as "yes", with the probability each needs.
 MIN_PROB = {
     'speech': {'addressed': 0.0, 'can_help': 0.0},
-    'vision': {'look': 0.65},  # real 'look' questions score 0.7+; borderline ones attached frames needlessly
+    'vision': {'look': 0.65},  # with the look-leaning criteria, real look questions score 0.65+ and few others do
     'scene': {'warn': 0.5, 'can_help': 0.6},
 }
 

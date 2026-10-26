@@ -3,6 +3,7 @@ import logging
 import sounddevice as sd
 import numpy as np
 import threading
+import time
 import queue
 from concurrent.futures import ThreadPoolExecutor
 from faster_whisper import WhisperModel
@@ -47,6 +48,10 @@ MAX_BUFFER_CHUNKS = round(20 / CHUNK_SEC)   # safety cap for one utterance
 # ("stop") is checked the moment it ends, since it never reaches 0.5 s.
 CHECK_USER_FROM = round(0.5 / CHUNK_SEC)
 CHECK_USER_EVERY = round(0.25 / CHUNK_SEC)
+# The preview's live speaker line: the last second of speech (the voiceprint's own window
+# length), scored about 8 times a second. A check costs well under a millisecond.
+LIVE_SCORE_EVERY = round(0.125 / CHUNK_SEC)
+LIVE_SCORE_WINDOW = round(1.0 / CHUNK_SEC)
 
 worker = ThreadPoolExecutor(max_workers=1)  # one Whisper run at a time
 
@@ -93,6 +98,9 @@ def transcribe_audio(on_user_speaking):
             if not user_confirmed and speech_chunks >= CHECK_USER_FROM \
                     and (speech_chunks - CHECK_USER_FROM) % CHECK_USER_EVERY == 0:
                 user_confirmed = check_user(speech, on_user_speaking)
+            if preview.enabled and speech_chunks >= CHECK_USER_FROM and speech_chunks % LIVE_SCORE_EVERY == 0:
+                _, score = verify(voiceprint, np.concatenate(speech[-LIVE_SCORE_WINDOW:]).reshape(-1), encoder, SPEAKER_THRESHOLD)
+                preview.add_live_score(score)
             silence_chunks = 0
             in_speech = True
         elif in_speech:
@@ -114,7 +122,8 @@ def transcribe_audio(on_user_speaking):
             if speech_chunks >= MIN_SPEECH_CHUNKS:
                 text, is_user, score, duration = pending.result() if pending is not None else process(speech_audio())
                 if text:
-                    preview.add_utterance(score, SPEAKER_THRESHOLD, is_user, duration, text)
+                    ended = time.time() - silence_chunks * CHUNK_SEC
+                    preview.add_utterance(score, SPEAKER_THRESHOLD, is_user, duration, text, ended)
                     transcript[chunk_id] = text
                     chunk_id += 1
                     result_queue.put(Spoken(

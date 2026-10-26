@@ -44,14 +44,16 @@ def to_client_turns(history: list[ConversationTurn], max_turns: int = MAX_TURNS)
 
 
 def _frame_notes(frames: list, current: bool) -> str:
-    """Say where a frame was, so a new one isn't mistaken for a contradiction of an old one."""
+    """Say when the attached images were seen, so a new view isn't mistaken for a contradiction of
+    an old one. Worded as seeing, not as frames: the reply should talk the same way."""
     if not frames:
         return ""
-    taken = ", ".join(f"{o.at.astimezone():%H:%M:%S}" for o in frames)
+    times = [f"{o.at.astimezone():%H:%M:%S.%f}"[:-5] for o in frames]
+    when = times[0] if len(times) == 1 else f"{times[0]} to {times[-1]}, oldest first"
     if current:
-        return f"[New camera frame, taken {taken}, attached automatically; not a request to describe it.]\n"
-    return (f"[A camera frame taken {taken} was shown with this message. It is no longer available, "
-            "but your answer to it was based on seeing it.]\n")
+        return f"[What you see as the user says this ({when}). Not a request to describe it.]\n"
+    return (f"[You saw what was in front of the user when they said this ({when}). You no longer see it, "
+            "but your answer was based on seeing it.]\n")
 
 
 def _recall_note(recalled: str) -> str:

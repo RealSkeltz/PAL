@@ -28,7 +28,7 @@ Point the camera at an object (a mug, a keyboard, a book).
 
 | Say | Expect |
 |---|---|
-| "Pal, what am I looking at?" | `camera: look (...)`, capture sound, `captured <label>`, an answer about the object |
+| "Pal, what am I looking at?" | `camera: look (...)`, capture sound, `looking: 3 frame(s) from ... ago`, `captured 3 frame(s): scene`, the "sent 3 frames to model" strip in the preview, an answer about the object |
 | "Pal, does this look clean to you?" | `camera: look` |
 | "Pal, can you read what's written on this?" | `camera: look` |
 | "Pal, what's the weather usually like in Sydney?" | `camera: no` |

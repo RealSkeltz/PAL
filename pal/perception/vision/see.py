@@ -1,6 +1,8 @@
 import logging
 import os
-import threading
+import queue
+import time
+from collections import deque
 
 os.environ["OPENCV_LOG_LEVEL"] = "SILENT"
 
@@ -15,8 +17,15 @@ from pal.debug.quiet import suppress_stderr
 
 logger = logging.getLogger(__name__)
 
-TARGET_FPS = 5
+TARGET_FPS = 10
 DELAY = int(1000 / TARGET_FPS)
+
+# The last few seconds of frames, so a look can go back to when the user started
+# talking: by the time the gate has decided, what they asked about may be gone.
+BUFFER_SECONDS = 6
+# Frames sent per look, spread from the start of the utterance to now. One sends
+# just the newest frame.
+FRAMES_PER_LOOK = 3
 
 # Detector crops are square thumbnails; a whole frame is much larger, so cap its
 # long edge before it becomes base64 in a prompt.
@@ -100,41 +109,67 @@ def camera() -> Generator[np.ndarray, None, None]:
         cv2.waitKey(DELAY)
 
 
-def run(trigger: threading.Event, detect: bool = True,
-        frames: Iterable[np.ndarray] | None = None) -> Generator[tuple[np.ndarray, str, float], None, None]:
-    """Capture on trigger and yield (image, label, confidence).
+def pick(buffer: deque, since: float, count: int) -> list[tuple[float, np.ndarray]]:
+    """`count` (time, frame) pairs spread from `since` to the newest frame, oldest
+    first. Fewer when the buffer is too short to give distinct frames."""
+    newest = buffer[-1][0]
+    start = min(max(since, buffer[0][0]), newest)
+    if count == 1:
+        targets = [newest]
+    else:
+        targets = [start + (newest - start) * i / (count - 1) for i in range(count)]
+    picks = []
+    for target in targets:
+        closest = min(buffer, key=lambda entry: abs(entry[0] - target))
+        if not picks or picks[-1] is not closest:
+            picks.append(closest)
+    return picks
 
-    With `detect`, YOLO runs every frame and the trigger yields a crop of the
-    object nearest the centre. Without it, no detector runs at all and the
-    trigger yields the whole frame — useful when the subject is the scene rather
-    than one object, or when YOLO's classes don't cover what you're looking at.
+
+def run(requests: queue.Queue, detect: bool = True,
+        frames: Iterable[np.ndarray] | None = None) -> Generator[list[tuple[np.ndarray, str, float, float]], None, None]:
+    """Capture on request and yield a list of (image, label, confidence, taken_at).
+
+    A request is the time (epoch seconds) the question started. Without `detect`
+    a look yields FRAMES_PER_LOOK whole frames from the buffer, spread from then
+    to now — useful when the subject is the scene rather than one object, or when
+    YOLO's classes don't cover what you're looking at. With `detect`, YOLO runs
+    every frame and a look yields a crop of the object nearest the centre, now.
 
     `frames` replaces the webcam, e.g. with a remote device's camera; it sets the pace.
     """
     logger.info(f"capture loop started (detector {'on' if detect else 'off'})")
+    buffer = deque()  # (time, downscaled frame), oldest first
 
     for frame in camera() if frames is None else frames:
+        now = time.time()
+        buffer.append((now, downscale(frame)))
+        while buffer[0][0] < now - BUFFER_SECONDS:
+            buffer.popleft()
+
         if detect:
             closest_box, r = _process_frame(frame)
         else:
             # No detector, so nothing annotates the preview — push the raw frame.
             preview.set_frame(frame)
 
-        if trigger.is_set():
-            capture = None
-            if not detect:
-                logger.info("trigger fired, capturing full frame")
-                capture = (downscale(frame), "scene", 1.0)
-            elif closest_box is None:
-                logger.info("trigger fired but no object detected")
-            else:
-                label = r.names[int(closest_box.cls)]
-                conf = float(closest_box.conf)
-                logger.debug(f"trigger fired, capturing: {label} ({conf:.2f})")
-                capture = extract_crop(r, closest_box)
+        try:
+            since = requests.get_nowait()
+        except queue.Empty:
+            continue
 
-            # Release the trigger before yielding — the capture already happened,
-            # so a slow consumer shouldn't hold the camera armed.
-            trigger.clear()
-            if capture is not None:
-                yield capture
+        capture = []
+        if not detect:
+            capture = [(image, "scene", 1.0, at) for at, image in pick(buffer, since, FRAMES_PER_LOOK)]
+            ago = ", ".join(f"{now - at:.1f}s" for *_, at in capture)
+            logger.info(f"looking: {len(capture)} frame(s) from {ago} ago")
+            preview.show_sent([(image, now - at) for image, *_, at in capture])
+        elif closest_box is None:
+            logger.info("look requested but no object detected")
+        else:
+            label = r.names[int(closest_box.cls)]
+            conf = float(closest_box.conf)
+            logger.debug(f"look requested, capturing: {label} ({conf:.2f})")
+            capture = [(*extract_crop(r, closest_box), now)]
+        if capture:
+            yield capture

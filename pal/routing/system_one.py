@@ -37,12 +37,13 @@ SCENE_QUESTIONS = {
 VISION_QUESTIONS = {
     'needs_vision': {
         'type': 'choice',
-        'instructions': STATE_DESCRIPTION + "The event is a request to Buddy. Would seeing what the camera shows right now help answer it?",
+        # Biased towards looking: a needless look costs little, a missed one gives a wrong answer.
+        'instructions': STATE_DESCRIPTION + "The event is a request to Buddy. Would seeing what is in front of the user help answer it?",
         'criteria': {
-            'look': "Seeing would help: it is about something in front of the user ('that', 'this one', 'over there', "
-                    "'in front of me'), or asks to read, identify, check or describe something.",
-            'no_look': "The answer doesn't depend on what is in front of the user: knowledge, the conversation "
-                       "or a tool such as notes or timers is enough, also when 'this' or 'that' means something said earlier.",
+            'look': "It touches the physical world around the user: what they are doing, holding or looking at, people, "
+                    "animals or things nearby, where something is, or 'this', 'that', 'here', 'check it'. Also reading, "
+                    "identifying, checking or describing something. When unsure, look.",
+            'no_look': "Only about knowledge, the conversation itself, Buddy, or a tool such as notes or timers.",
         },
     },
 }

@@ -7,6 +7,7 @@ the terminal: every INFO line any module logs shows up here through
 lines are tagged so they land on the image instead. Disabled unless `preview.start()` is called; until then every
 call is a no-op.
 """
+import base64
 import json
 import logging
 import threading
@@ -17,6 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import cv2
 
 logger = logging.getLogger(__name__)
+
+SENT_THUMB_HEIGHT = 192  # shown at half size, sharp on high-DPI screens
 
 HTML_PAGE = """<!DOCTYPE html>
 <html>
@@ -38,6 +41,14 @@ HTML_PAGE = """<!DOCTYPE html>
 
   #stage { position: relative; min-height: 0; overflow: hidden; }
   #frame { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #sent { position: absolute; top: 12px; left: 12px; right: 12px; display: none; transition: opacity 1s; }
+  #sent.on { display: block; }
+  #sent .label { display: inline-block; margin-bottom: 6px; padding: 2px 8px; border-radius: 4px;
+                 background: var(--you); color: #fff; }
+  #sent figure { display: inline-block; margin: 0 8px 0 0; }
+  #sent img { display: block; height: 96px; border: 2px solid var(--you); border-radius: 4px; }
+  #sent figcaption { color: var(--text); text-shadow: 0 1px 3px #000; }
+  #stage.sending { box-shadow: inset 0 0 0 4px var(--you); }
   #subs { position: absolute; left: 0; right: 0; bottom: 0; padding: 48px 24px 20px;
           background: linear-gradient(transparent, rgba(0,0,0,.85) 40%);
           font: 18px/1.45 system-ui, sans-serif; color: var(--text); }
@@ -59,7 +70,10 @@ HTML_PAGE = """<!DOCTYPE html>
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 10px;
               vertical-align: -1px; }
   .legend i:first-child { margin-left: 0; }
-  #chart { width: 100%; height: 150px; display: block; }
+  #live { width: 100%; height: 110px; display: block; margin-bottom: 10px; }
+  #chart { width: 100%; height: 110px; display: block; }
+  #score .sub { color: var(--faint); margin: 2px 0 4px; }
+  #score .sub b { color: var(--muted); font-weight: normal; }
   #chart text { fill: var(--faint); font: 10px monospace; }
   #tip { position: fixed; pointer-events: none; display: none; max-width: 280px; padding: 6px 8px;
          background: #000; border: 1px solid var(--line); border-radius: 4px; color: var(--text); }
@@ -76,15 +90,19 @@ HTML_PAGE = """<!DOCTYPE html>
 <body>
 <div id="stage">
   <img id="frame" alt="">
+  <div id="sent"></div>
   <div id="subs"></div>
 </div>
 <aside id="side">
   <header>pal -- <span id="status">disconnected</span> -- <a href="#" id="clear">clear</a></header>
   <section id="score">
-    <h2>Speaker score per utterance</h2>
+    <h2>Speaker score</h2>
     <div id="latest">--</div>
     <div class="legend"><i style="background:var(--you)"></i>you <i style="background:var(--other)"></i>other
       <span style="margin-left:10px">--- threshold</span></div>
+    <div class="sub">live, last 20 s: <b>∿</b> last second of speech, <b>▬</b> whole utterance</div>
+    <canvas id="live" role="img" aria-label="Live speaker score, last 20 seconds"></canvas>
+    <div class="sub">per utterance, last 40</div>
     <svg id="chart" role="img" aria-label="Speaker score per utterance"></svg>
   </section>
   <pre id="log"></pre>
@@ -121,6 +139,55 @@ HTML_PAGE = """<!DOCTYPE html>
     while (subs.children.length > MAX_SUBS) subs.firstChild.remove();
     [...subs.children].forEach((el, i, all) => { el.style.opacity = 0.35 + 0.65 * (i + 1) / all.length; });
   }
+
+  // Live chart: drawn every animation frame so it scrolls smoothly; points arrive ~8/s while speaking.
+  const LIVE_SECONDS = 20, GAP_SECONDS = 0.4;
+  let livePoints = [];  // {t, score}
+  const live = $('live'), css = getComputedStyle(document.documentElement);
+  const color = (name) => css.getPropertyValue(name).trim();
+  function drawLive() {
+    const dpr = devicePixelRatio || 1, w = live.clientWidth, h = live.clientHeight;
+    if (live.width !== w * dpr || live.height !== h * dpr) { live.width = w * dpr; live.height = h * dpr; }
+    const g = live.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    const left = 26, top = 6, plotH = h - top - 4, now = Date.now() / 1000;
+    const x = (t) => left + (w - left) * (1 - (now - t) / LIVE_SECONDS);
+    const y = (v) => top + plotH * (1 - Math.max(0, Math.min(1, v)));
+    g.font = '10px monospace'; g.fillStyle = color('--faint'); g.textAlign = 'right';
+    for (const v of [0, 0.5, 1]) {
+      g.strokeStyle = '#383835'; g.lineWidth = 1; g.beginPath(); g.moveTo(left, y(v)); g.lineTo(w, y(v)); g.stroke();
+      g.fillText(v.toFixed(1), left - 4, y(v) + 3);
+    }
+    const threshold = utterances.length ? utterances[utterances.length - 1].threshold : 0.5;
+    g.setLineDash([4, 3]); g.strokeStyle = color('--muted');
+    g.beginPath(); g.moveTo(left, y(threshold)); g.lineTo(w, y(threshold)); g.stroke(); g.setLineDash([]);
+    // whole utterances: a span at their final score, over the time they were spoken
+    g.lineWidth = 3; g.lineCap = 'round';
+    for (const u of utterances) {
+      if (!u.ended_at || u.ended_at < now - LIVE_SECONDS) continue;
+      g.strokeStyle = u.is_user ? color('--you') : color('--other');
+      g.globalAlpha = 0.55;
+      g.beginPath(); g.moveTo(Math.max(left, x(u.ended_at - u.seconds)), y(u.score)); g.lineTo(x(u.ended_at), y(u.score)); g.stroke();
+      g.globalAlpha = 1;
+    }
+    // last second of speech: a line, coloured per segment by which side of the threshold it ends on
+    livePoints = livePoints.filter((p) => p.t >= now - LIVE_SECONDS - 1);
+    g.lineWidth = 2;
+    for (let i = 1; i < livePoints.length; i++) {
+      const a = livePoints[i - 1], b = livePoints[i];
+      if (b.t - a.t > GAP_SECONDS) continue;  // silence between utterances: leave a gap
+      g.strokeStyle = b.score >= threshold ? color('--you') : color('--other');
+      g.beginPath(); g.moveTo(x(a.t), y(a.score)); g.lineTo(x(b.t), y(b.score)); g.stroke();
+    }
+    const last = livePoints[livePoints.length - 1];
+    if (last && now - last.t < GAP_SECONDS) {
+      g.fillStyle = last.score >= threshold ? color('--you') : color('--other');
+      g.beginPath(); g.arc(x(last.t), y(last.score), 4, 0, 2 * Math.PI); g.fill();
+    }
+    requestAnimationFrame(drawLive);
+  }
+  requestAnimationFrame(drawLive);
 
   function addUtterance(u) {
     utterances.push(u);
@@ -168,8 +235,39 @@ HTML_PAGE = """<!DOCTYPE html>
   addEventListener('resize', drawChart);
   drawChart();
 
+  const SENT_SHOW_MS = 8000;
+  let sentTimer = null;
+  function showSent({ t, frames }) {
+    const age = Date.now() - t * 1000;
+    if (age > SENT_SHOW_MS) return;  // replayed history from before this page opened
+    const sent = $('sent'), stage = $('stage');
+    const label = document.createElement('div');
+    label.className = 'label';
+    label.textContent = 'sent ' + frames.length + ' frame' + (frames.length === 1 ? '' : 's') + ' to model';
+    const figures = frames.map((f) => {
+      const fig = document.createElement('figure');
+      const img = document.createElement('img');
+      img.src = f.src;
+      const cap = document.createElement('figcaption');
+      cap.textContent = f.ago < 0.05 ? 'now' : '-' + f.ago.toFixed(1) + 's';
+      fig.append(img, cap);
+      return fig;
+    });
+    sent.replaceChildren(label, document.createElement('br'), ...figures);
+    sent.style.opacity = 1;
+    sent.classList.add('on');
+    stage.classList.add('sending');
+    setTimeout(() => stage.classList.remove('sending'), 1200);
+    clearTimeout(sentTimer);
+    sentTimer = setTimeout(() => {
+      sent.style.opacity = 0;
+      sentTimer = setTimeout(() => sent.classList.remove('on'), 1000);
+    }, SENT_SHOW_MS - age - 1000);
+  }
+
   function clearAll() {
-    log.textContent = ''; subs.replaceChildren(); utterances = [];
+    log.textContent = ''; subs.replaceChildren(); utterances = []; livePoints = [];
+    $('sent').classList.remove('on');
     $('latest').textContent = '--'; drawChart();
   }
 
@@ -188,6 +286,8 @@ HTML_PAGE = """<!DOCTYPE html>
       if (msg.reset) clearAll();
       else if (msg.speech) addSpeech(msg.speech);
       else if (msg.utterance) addUtterance(msg.utterance);
+      else if (msg.sent) showSent(msg.sent);
+      else if (msg.live) livePoints.push(msg.live);
       else addLine(msg.line);
     };
   }
@@ -248,10 +348,21 @@ class PreviewServer:
         """Something said, by "user", "other" or "pal": shown over the camera image."""
         self._push({"speech": {"who": who, "text": text}})
 
-    def add_utterance(self, score: float, threshold: float, is_user: bool, seconds: float, text: str):
-        """One bar in the speaker score chart."""
+    @property
+    def enabled(self) -> bool:
+        """For callers that would compute something only the preview needs."""
+        return self._enabled
+
+    def add_utterance(self, score: float, threshold: float, is_user: bool, seconds: float, text: str,
+                      ended_at: float):
+        """A finished utterance: a bar in the history chart and a span in the live one."""
         self._push({"utterance": {"score": score, "threshold": threshold, "is_user": is_user,
-                                  "seconds": seconds, "text": text}})
+                                  "seconds": seconds, "text": text, "ended_at": ended_at}})
+
+    def add_live_score(self, score: float):
+        """The speaker score of the last moment of speech, for the live line. Not kept for
+        clients that connect later: there are many, and they're only worth seeing as they come."""
+        self._push({"live": {"t": time.time(), "score": score}}, keep=False)
 
     def reset(self):
         """Clear server history and tell connected clients to clear."""
@@ -260,13 +371,27 @@ class PreviewServer:
         self._history.clear()
         self._broadcast(self._encode({"reset": True}))
 
+    def show_sent(self, frames):
+        """Frames just sent to the model, as (BGR image, seconds ago) pairs: shown over the image for a while."""
+        if not self._enabled:
+            return
+        thumbs = []
+        for image, ago in frames:
+            h, w = image.shape[:2]
+            small = cv2.resize(image, (int(w * SENT_THUMB_HEIGHT / h), SENT_THUMB_HEIGHT), interpolation=cv2.INTER_AREA)
+            ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            if ok:
+                thumbs.append({"src": "data:image/jpeg;base64," + base64.b64encode(buf).decode(), "ago": ago})
+        self._push({"sent": {"t": time.time(), "frames": thumbs}})
+
     # ----- internals -----
 
-    def _push(self, payload: dict):
+    def _push(self, payload: dict, keep: bool = True):
         if not self._enabled:
             return
         message = self._encode(payload)
-        self._history.append(message)
+        if keep:
+            self._history.append(message)
         self._broadcast(message)
 
     @staticmethod
