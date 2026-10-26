@@ -46,6 +46,7 @@ class Hit:
     score: float       # fused rank score, higher is better
     similarity: float  # cosine similarity to the query
     keyword: float     # BM25 score, 0 if no keyword matched
+    cutoff: float = 0.0  # the similarity a vector match needed in this search (median + MIN_MARGIN)
 
 
 class RecallIndex:
@@ -114,7 +115,8 @@ class RecallIndex:
         fused = {j: sum(1 / (RRF_K + r[j]) for r in (by_keyword, by_vector) if j in r)
                  for j in set(by_keyword) | set(by_vector)}
         best = sorted(fused, key=fused.get, reverse=True)[:k]
-        return [Hit(entries[candidates[j]], fused[j], float(similarity[j]), float(keyword[j])) for j in best]
+        cutoff = typical + MIN_MARGIN
+        return [Hit(entries[candidates[j]], fused[j], float(similarity[j]), float(keyword[j]), cutoff) for j in best]
 
 
 def format_hits(hits: list[Hit]) -> str:

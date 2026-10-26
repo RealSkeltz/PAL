@@ -12,6 +12,8 @@ import time
 from typing import Callable
 from uuid import uuid4
 
+from pal.debug import trace
+from pal.debug.preview import preview
 from pal.response.run_turn import AgentEvent, StepDone, TextChunk, ToolFinished, ToolStarted, run_turn
 from pal.llm.base import LLMClient
 from pal.log import record
@@ -35,7 +37,13 @@ def respond(
     tools: ToolHandler | None = None,
     cancel: threading.Event | None = None,
     sinks: list[Sink] | None = None,
-):
+    hold: threading.Event | None = None,
+    discard: threading.Event | None = None,
+) -> bool:
+    """Answer `user_turns`. With `hold`, the reply was started before the gate decided whether
+    to look: nothing is said and no tool runs until `hold` is set. If `discard` is set instead
+    (the gate wants to look, and `cancel` is set with it), the reply is dropped without a trace
+    and the user turns are pending again, to be answered with the frames. True if discarded."""
     cancel = cancel or threading.Event()
     sinks = default_sinks(voice) if sinks is None else sinks
     reply_id = uuid4()             # voice tags are (reply_id, step), unique per reply
@@ -45,14 +53,28 @@ def respond(
 
     start = time.time()
     first_text = first_sentence = None
+    held: list[tuple[str, int]] = []  # sentences written before the gate decided, with their step
 
-    def say(text):
+    def speak(text, at_step):
         nonlocal first_sentence
-        if cancel.is_set():
-            return  # cut off; don't start a new sentence after the voice was stopped
         first_sentence = first_sentence or time.time()
         logger.info(f"said: {text}", extra={"speech": ("pal", text)})
-        voice.say(text, tag=(reply_id, step))
+        voice.say(text, tag=(reply_id, at_step))
+
+    def say(text):
+        if cancel.is_set():
+            return  # cut off; don't start a new sentence after the voice was stopped
+        if hold is not None and not hold.is_set():
+            held.append((text, step))
+            return
+        speak(text, step)
+
+    def wait_for_gate():
+        """Block until the gate has decided, then say what was held back if it may be said."""
+        while hold is not None and not (hold.is_set() or cancel.is_set()):
+            time.sleep(0.01)
+        while held and not cancel.is_set():
+            speak(*held.pop(0))
 
     for turn in user_turns:
         turn.response = Response.RESPONDING
@@ -60,6 +82,12 @@ def respond(
     status = Response.RESPONDED
     try:
         for event in run_turn(history, system_prompt, client, tools, cancel):
+            if held and hold.is_set():
+                wait_for_gate()
+            if isinstance(event, ToolStarted) and hold is not None:
+                wait_for_gate()  # a tool mustn't run for a reply that may be dropped
+                if cancel.is_set():
+                    break
             if isinstance(event, TextChunk):
                 first_text = first_text or time.time()
                 partial += event.text
@@ -79,11 +107,20 @@ def respond(
                     _insert_reply(history, turn, user_turns)
                     recorded.append((step, turn))
                 step, partial = step + 1, ""
+        wait_for_gate()
         voice.wait(cancel)
     except Exception:
         logger.exception("turn failed")
         status = Response.FAILED
         voice.wait(cancel)
+
+    if discard is not None and discard.is_set():
+        for _, turn in recorded:
+            history.remove(turn)
+        for turn in user_turns:
+            turn.response = Response.PENDING
+        logger.info("started before the gate decided; it looks, so starting over with what it sees")
+        return True
 
     if cancel.is_set():
         voice.stop()
@@ -110,6 +147,7 @@ def respond(
                 [voice.started_at((reply_id, s)) for s in range(step + 1)])
     for _, turn in recorded:
         record("turn", turn)
+    return False
 
 
 def _insert_reply(history, turn: PalTurn, user_turns: list[UserTurn]):
@@ -122,12 +160,16 @@ def _insert_reply(history, turn: PalTurn, user_turns: list[UserTurn]):
 
 
 def _log_timing(start, user_turns, first_text, first_sentence, audio_starts):
-    """One line per reply: where the time between hearing and speaking went."""
+    """One line per reply: where the time between hearing and speaking went. The preview also
+    gets the stages before it (marked by listen and the router), for its latency bar."""
     since = lambda t: f"{t - start:.2f}s" if t else "-"
     first_audio = min((t for t in audio_starts if t), default=None)
     waited = start - user_turns[-1].utterance.at.timestamp()
     logger.info(f"timing: waited {waited:.2f}s, first text {since(first_text)}, first sentence {since(first_sentence)}, "
                 f"first audio {since(first_audio)}, done {since(time.time())}")
+    marks = trace.take(user_turns[-1].utterance.id)
+    marks.update(start=start, first_text=first_text, first_sentence=first_sentence, first_audio=first_audio)
+    preview.add_latency(user_turns[-1].utterance.text, {k: v for k, v in marks.items() if v})
 
 
 # Words that open a new clause after a comma; a comma before anything else is not a good place to pause.

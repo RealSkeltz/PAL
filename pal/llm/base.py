@@ -61,11 +61,12 @@ class LLMClient(ABC):
     @abstractmethod
     def stream(
         self,
-        system: str | None,
+        system: str | list[str] | None,
         conversation: list[Turn],
         tools: list[ToolSpec] | None = None,
     ) -> Iterator[TextDelta | Completed]:
-        """Yield TextDelta as text arrives, then exactly one Completed at the end."""
+        """Yield TextDelta as text arrives, then exactly one Completed at the end. `system` may
+        be a list of parts, the most stable first, so a client that caches can cache them apart."""
 
     def parse(self, system: str | None, conversation: list[Turn], output: type[T]) -> T:
         """One reply, constrained to the shape of `output` and returned as an instance of it."""
@@ -90,3 +91,10 @@ class LLMClient(ABC):
             if isinstance(event, Completed):
                 result = event
         return result
+
+
+def system_text(system: str | list[str] | None) -> str | None:
+    """A system prompt given as parts, as one string, for clients that take only that."""
+    if system is None or isinstance(system, str):
+        return system
+    return "\n\n".join(p for p in system if p) or None

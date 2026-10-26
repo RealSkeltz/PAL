@@ -2,7 +2,12 @@
 
 `anthropic` is imported lazily so the ollama path never depends on it.
 """
+import logging
+import os
+
 from pal.llm.base import Completed, LLMClient, TextDelta, ToolCall, ToolSpec, Turn
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-opus-5"
 FOUNDRY_DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -23,6 +28,12 @@ DEFAULT_EFFORT = "low"
 # re-runs it on a substitute model in the same call rather than returning empty.
 # First-party API only — not available on Foundry, Bedrock, or Vertex.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
+# Prompt caching: every reply resends the same system prompt and a conversation that only
+# grows at the end, so most of the input can be read from cache instead of processed again.
+# One breakpoint after the fixed system prompt (it survives memory changing the rest), plus
+# automatic caching of the conversation tail. PAL_PROMPT_CACHE=0 turns it off, for comparing.
+PROMPT_CACHE = os.environ.get("PAL_PROMPT_CACHE", "1") != "0"
 
 
 class AnthropicClient(LLMClient):
@@ -71,8 +82,13 @@ class AnthropicClient(LLMClient):
         if self.supports_fallbacks:
             request["betas"] = [FALLBACK_BETA]
             request["fallbacks"] = "default"
-        if system:
-            request["system"] = system
+        parts = [system] if isinstance(system, str) else [p for p in (system or []) if p]
+        if parts:
+            request["system"] = [{"type": "text", "text": p} for p in parts]
+            if PROMPT_CACHE:
+                request["system"][0]["cache_control"] = {"type": "ephemeral"}
+        if PROMPT_CACHE:
+            request["cache_control"] = {"type": "ephemeral"}
         if tools:
             request["tools"] = [_encode_tool(t) for t in tools]
 
@@ -80,6 +96,9 @@ class AnthropicClient(LLMClient):
             for piece in stream.text_stream:
                 yield TextDelta(piece)
             final = stream.get_final_message()
+        u = final.usage
+        logger.debug(f"usage: input {u.input_tokens} + cache read {u.cache_read_input_tokens or 0} "
+                     f"+ cache write {u.cache_creation_input_tokens or 0}, output {u.output_tokens}")
 
         # Check stop_reason before reading content — a refusal can leave it empty.
         if final.stop_reason == "refusal":

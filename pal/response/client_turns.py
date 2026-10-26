@@ -14,6 +14,10 @@ from pal.schemas.event import Action
 from pal.schemas.turn import ConversationTurn, Delivery, UserTurn
 
 MAX_TURNS = 20
+# Old turns are dropped this many at a time, not one per message: a window that moves every
+# turn changes the start of the conversation every time, and prompt caching only reuses an
+# unchanged start. So the model sees between MAX_TURNS and MAX_TURNS + DROP_STEP - 1 turns.
+DROP_STEP = 10
 # The latest look's images stay with the conversation this long, so a follow-up about what was
 # just seen ("and the colour?") can still be answered without looking again. After that, or once a
 # newer look replaces it, only its description goes along.
@@ -22,7 +26,7 @@ RECENT_LOOK_SECONDS = 120
 
 def to_client_turns(history: list[ConversationTurn], max_turns: int = MAX_TURNS) -> list[Turn]:
     # Start on a user turn so a reply never arrives without its question.
-    start = max(len(history) - max_turns, 0)
+    start = max(len(history) - max_turns, 0) // DROP_STEP * DROP_STEP
     while start > 0 and not isinstance(history[start], UserTurn):
         start -= 1
     window = history[start:]

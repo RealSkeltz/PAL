@@ -30,6 +30,7 @@ import cv2
 from pal.llm import get_client
 from pal.config import CAPTURES_DIR, KNOWLEDGE_DIR
 from pal.perception.hearing import listen
+from pal.debug.preview import preview
 from pal.perception.vision import see
 from pal.perception.vision.describe import describe
 from pal.response.prompt import build_system_prompt
@@ -57,6 +58,11 @@ DEFAULT_MODEL = "ollama:qwen3.5:9b"
 EMBEDDING_MODEL = "embedding:embeddinggemma-2:740m"  # local, for recall
 AUTO_RECALL_K = 4
 AUTO_KNOWLEDGE_K = 3
+# Start replying while the gate still decides about the camera, when it's already known the speech
+# is for PAL; a reply begun without looking is dropped unheard if the gate does look. Only with a
+# remote response model: a local one would share the machine with the gate and slow it down.
+PARALLEL_GATE = os.environ.get("PAL_PARALLEL_GATE", "1") != "0"
+REMOTE_PROVIDERS = ("anthropic", "foundry")
 
 
 class Pal:
@@ -95,13 +101,18 @@ class Pal:
         self.look_requests: queue.Queue = queue.Queue()  # when each question started; see.run answers
         self.detect = False  # YOLO off by default; run(detect=True) turns it on
 
+        self._looking: dict = {}  # user turn id -> Future of its frames, while the gate decides
+
         self.tool_handler = BuiltinTools(self)
         self.router = EventRouter(
             self.memory, self.captures, self.look_requests,
             on_user_turn=self._on_user_turn,
             last_spoke_at=lambda: self.last_spoke_at,
+            parallel_gate=PARALLEL_GATE and self.model.split(":")[0] in REMOTE_PROVIDERS,
         )
-        logger.info(f"initialized (response model {self.model}, gate model {gate_client.model})")
+        logger.info(f"initialized (response model {self.model}, gate model {gate_client.model}, "
+                    f"gate {'alongside the reply' if self.router.parallel_gate else 'before the reply'}, "
+                    f"prompt cache {'on' if os.environ.get('PAL_PROMPT_CACHE', '1') != '0' else 'off'})")
 
     def run(self, text_mode: bool = False, detect: bool = False):
         """Start the agent. `detect` toggles YOLO object detection on the camera."""
@@ -196,9 +207,14 @@ class Pal:
             self.cancel.set()
             self.voice.stop()
 
-    def _on_user_turn(self, turn: UserTurn):
-        if turn.attachments:
-            self._looks.put((turn.utterance.text, list(turn.attachments)))
+    def _on_user_turn(self, turn: UserTurn, looked=None):
+        """`looked`, when the gate still decides: a Future of the frames the turn gets."""
+        describe_later = lambda frames: frames and self._looks.put((turn.utterance.text, list(frames)))
+        if looked is not None:
+            self._looking[turn.id] = looked
+            looked.add_done_callback(lambda f: describe_later(f.result()))
+        else:
+            describe_later(turn.attachments)
         if self._responding:
             logger.info("barge-in: cutting off the current reply")
             self.cancel.set()
@@ -217,6 +233,7 @@ class Pal:
         except Exception:
             logger.exception("automatic recall failed")
             return ""
+        preview.add_recall(query, hits, knowledge)
         logger.info(f"recall: {len(hits)} from earlier, {len(knowledge)} from reference material "
                     f"({(time.time() - start) * 1000:.0f} ms)"
                     + "".join(f"\n    {h.similarity:.2f} {h.entry.text[:100]}" for h in hits + knowledge))
@@ -229,6 +246,7 @@ class Pal:
         return "\n".join(sections)
 
     def _respond_loop(self):
+        restarting = False  # a reply begun before the gate looked, being started over
         while True:
             self._wake.wait()
             self._wake.clear()
@@ -238,18 +256,39 @@ class Pal:
                 self._responding = True
                 # Here rather than when the turn arrives: after a barge-in, the cut-off reply's
                 # voice.stop() has run by now, so it can't swallow the cue.
-                self.voice.play(heard_tone())
+                if not restarting:
+                    self.voice.play(heard_tone())
+                discarded = False
                 try:
                     pending[-1].recalled = self._recalled(pending)
-                    system = "\n\n".join(p for p in (self.system_prompt, self.memory.background()) if p)
-                    respond(self.memory.history, pending, system, self.client, self.voice,
-                            tools=self.tool_handler, cancel=self.cancel)
+                    # Fixed prompt first, memory's background second: they're cached apart
+                    system = [p for p in (self.system_prompt, self.memory.background()) if p]
+                    looked = self._looking.pop(pending[-1].id, None)
+                    hold = discard = None
+                    # Already decided (the gate beat the reply here): any frames are on the turn
+                    if looked is not None and not looked.done():
+                        hold, discard = threading.Event(), threading.Event()
+                        _thread(self._await_gate, looked, hold, discard)
+                    discarded = respond(self.memory.history, pending, system, self.client, self.voice,
+                                        tools=self.tool_handler, cancel=self.cancel, hold=hold, discard=discard)
                 finally:
                     self._responding = False
+                restarting = discarded
+                if discarded:
+                    self._wake.set()  # answer again, now with the frames
+                    continue
                 self.last_spoke_at = time.time()
             with self._lock:
                 if not self._wake.is_set():
                     self.idle.set()
+
+    def _await_gate(self, looked, hold: threading.Event, discard: threading.Event):
+        """Let a reply begun without looking go on, or drop it if the gate looks after all."""
+        if looked.result():
+            discard.set()
+            self.cancel.set()
+        else:
+            hold.set()
 
     # --- Inputs --------------------------------------------------------------
 

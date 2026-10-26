@@ -6,12 +6,19 @@ is direct when it names PAL or comes right after PAL spoke; only when neither
 holds does the model gate decide. The same gate call decides whether the
 answer needs the camera, and only then are frames attached: from when the
 user started talking up to now, since that's what they were looking at.
+
+With `parallel_gate`, speech that is for PAL without asking (typed, named, or
+right after PAL spoke) becomes a turn at once, so the reply can start while
+the gate still decides about the camera; `on_user_turn` then gets a future
+that resolves to the turn's frames (empty when it doesn't look).
 """
 import logging
 import queue
+from concurrent.futures import Future
 from dataclasses import replace
 from typing import Callable
 
+from pal.debug import trace
 from pal.routing.gate import addressed_by_name, assess, within_conversation_window
 from pal.log import record
 from pal.memory import Memory
@@ -32,14 +39,16 @@ class EventRouter:
         memory: Memory,
         captures: queue.Queue,
         look_requests: queue.Queue,
-        on_user_turn: Callable[[UserTurn], None],
+        on_user_turn: Callable[..., None],
         last_spoke_at: Callable[[], float],
+        parallel_gate: bool = False,
     ):
         self.memory = memory
         self.captures = captures
         self.look_requests = look_requests
         self.on_user_turn = on_user_turn
         self.last_spoke_at = last_spoke_at
+        self.parallel_gate = parallel_gate
 
     def run(self, events: queue.Queue):
         logger.info("started")
@@ -57,7 +66,14 @@ class EventRouter:
             self.memory.add_event(event)
             return
 
-        speak, look = self._assess(event)
+        via = self._via(event)
+        if self.parallel_gate and via != "model":
+            self._route_in_parallel(replace(event, role=Role.DIRECT), via)
+            return
+
+        trace.mark(event.id, "gate_start")
+        speak, look = self._assess(event, via)
+        trace.mark(event.id, "gate_end")
         if not speak:
             self.memory.add_event(event)
             return
@@ -67,20 +83,36 @@ class EventRouter:
         self.memory.add_turn(turn)
         self.on_user_turn(turn)
 
-    def _assess(self, event: Language) -> tuple[bool, bool]:
-        """(is it for PAL, does the answer need the camera), logged and recorded."""
-        if event.role is Role.DIRECT:
-            via = "typed"
-        elif addressed_by_name(event.text):
-            via = "name"
-        elif within_conversation_window(self.last_spoke_at()):
-            via = "window"
-        else:
-            via = "model"
-
+    def _route_in_parallel(self, event: Language, via: str):
+        """Already known to be for PAL: the turn goes out now, the camera question after."""
+        turn = UserTurn(utterance=event)
+        looked: Future = Future()
+        self.memory.add_turn(turn)
+        self.on_user_turn(turn, looked)
+        trace.mark(event.id, "gate_start")
+        history = [t for t in self.memory.history if t is not turn]  # the gate reads this as what came before
+        _, look = self._assess(event, via, history)
+        trace.mark(event.id, "gate_end")
         try:
-            speak_decision, look_decision = assess(event.text, self.memory.history, ask_speak=via == "model",
-                                                       situation=self.memory.gate_brief())
+            turn.attachments = self._attachments(look, _started_at(event))
+        finally:
+            looked.set_result(turn.attachments)
+
+    def _via(self, event: Language) -> str:
+        """How it's known whether speech is for PAL: without asking, or by asking the gate model."""
+        if event.role is Role.DIRECT:
+            return "typed"
+        if addressed_by_name(event.text):
+            return "name"
+        if within_conversation_window(self.last_spoke_at()):
+            return "window"
+        return "model"
+
+    def _assess(self, event: Language, via: str, history=None) -> tuple[bool, bool]:
+        """(is it for PAL, does the answer need the camera), logged and recorded."""
+        try:
+            speak_decision, look_decision = assess(event.text, self.memory.history if history is None else history,
+                                                   ask_speak=via == "model", situation=self.memory.gate_brief())
         except Exception:
             logger.exception("gate failed, responding anyway, without the camera")
             speak_decision = look_decision = None

@@ -12,6 +12,7 @@ from pal.config import VOICEPRINTS_DIR
 from pal.schemas.event import Actor, Role, Spoken
 from pal.perception.hearing.whisper_prompt import WHISPER_PROMPT
 
+from pal.debug import trace
 from pal.debug.preview import preview
 from pal.debug.timing import timed
 
@@ -126,13 +127,16 @@ def transcribe_audio(on_user_speaking):
                     preview.add_utterance(score, SPEAKER_THRESHOLD, is_user, duration, text, ended)
                     transcript[chunk_id] = text
                     chunk_id += 1
-                    result_queue.put(Spoken(
+                    spoken = Spoken(
                         actor=Actor.USER if is_user else Actor.OTHER,
                         role=Role.CONTEXT,  # the router's gate decides what is direct
                         text=text,
                         duration_s=duration,
                         speaker_score=score,
-                    ))
+                    )
+                    trace.mark(spoken.id, "speech_end", ended)
+                    trace.mark(spoken.id, "transcribed")
+                    result_queue.put(spoken)
             buffer = []
             speech = []
             user_confirmed = False

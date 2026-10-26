@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import ollama
 
-from pal.llm.base import Completed, LLMClient, TextDelta, ToolCall, ToolSpec, Turn
+from pal.llm.base import Completed, LLMClient, TextDelta, ToolCall, ToolSpec, Turn, system_text
 
 
 class OllamaClient(LLMClient):
@@ -30,6 +30,7 @@ class OllamaClient(LLMClient):
         return output.model_validate_json(response["message"]["content"])
 
     def stream(self, system, conversation, tools=None):
+        system = system_text(system)
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
