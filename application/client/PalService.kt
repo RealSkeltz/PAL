@@ -10,6 +10,7 @@ import android.media.ToneGenerator
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
+import com.twilio.audioswitch.AudioDevice
 import io.livekit.android.LiveKit
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
@@ -29,12 +30,14 @@ import java.net.URL
  * Foreground service that keeps mic + camera streaming to the Pal server,
  * also with the screen off or the phone in a pocket.
  *
- * Audio routing: LiveKit automatically prefers a connected Bluetooth headset,
- * so pair the earpiece before connecting.
+ * Audio routing: only ever the Bluetooth headset. The voiceprint was recorded
+ * through it, and the phone's own mic sounds different enough that speaker ID
+ * stops recognising the user, so without a headset the mic stays off.
  */
 class PalService : LifecycleService() {
 
     private var room: Room? = null
+    @Volatile private var onHeadset = false  // the mic is on, through the headset
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
@@ -87,6 +90,9 @@ class PalService : LifecycleService() {
             val newRoom = LiveKit.create(applicationContext)
             room = newRoom
             newRoom.videoTrackCaptureDefaults = LocalVideoTrackOptions(position = CameraPosition.BACK)
+            newRoom.audioSwitchHandler?.registerAudioDeviceChangeListener { devices, selected ->
+                onAudioDevices(newRoom, devices, selected)
+            }
 
             // Events from the server and the connection
             launch {
@@ -112,7 +118,8 @@ class PalService : LifecycleService() {
             }
 
             newRoom.connect("ws://$host:7880", token)
-            newRoom.localParticipant.setMicrophoneEnabled(true)
+            newRoom.localParticipant.setMicrophoneEnabled(onHeadset)
+            if (!onHeadset) PalState.log("No headset: mic off until one connects")
             publishCamera(newRoom)
 
             PalState.status.value = "Live"
@@ -136,6 +143,30 @@ class PalService : LifecycleService() {
         track.startCapture()
         room.localParticipant.publishVideoTrack(track)
         PalState.log("Using the USB camera")
+    }
+
+    /** Keeps audio on the Bluetooth headset. Without one, the mic goes off instead of
+     * falling back to the phone's mic, and comes back on when the headset does. */
+    private fun onAudioDevices(room: Room, devices: List<AudioDevice>, selected: AudioDevice?) {
+        val headset = devices.firstOrNull { it is AudioDevice.BluetoothHeadset }
+        if (headset != null && selected != headset) {
+            room.audioSwitchHandler?.selectDevice(headset)  // sticky; the listener fires again once it's active
+            return
+        }
+        val nowOnHeadset = selected is AudioDevice.BluetoothHeadset
+        if (nowOnHeadset == onHeadset) return
+        onHeadset = nowOnHeadset
+        if (room.state != Room.State.CONNECTED) return  // connect() enables the mic to match
+        lifecycleScope.launch {
+            room.localParticipant.setMicrophoneEnabled(nowOnHeadset)
+            if (nowOnHeadset) {
+                PalState.log("Headset back: mic on")
+                playCue(ToneGenerator.TONE_PROP_ACK)
+            } else {
+                PalState.log("Headset gone: mic off")
+                playCue(ToneGenerator.TONE_PROP_NACK)
+            }
+        }
     }
 
     private fun handleServerEvent(json: String) {

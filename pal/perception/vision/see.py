@@ -32,14 +32,17 @@ FRAMES_PER_LOOK = 3
 MAX_FRAME_EDGE = 768
 
 _MODEL = None
+_DEVICE = None  # Apple GPU when there is one; ultralytics finds CUDA itself
 
 
 def _model():
     """Load YOLO on first use — running detector-free should cost nothing."""
-    global _MODEL
+    global _MODEL, _DEVICE
     if _MODEL is None:
+        import torch
         from ultralytics import YOLO
-        _MODEL = YOLO(str(VISION_MODELS / "yolov8n.pt"), verbose=False)
+        _DEVICE = "mps" if torch.backends.mps.is_available() else None
+        _MODEL = YOLO(str(VISION_MODELS / "yolo26m.pt"), verbose=False)
     return _MODEL
 
 
@@ -69,7 +72,7 @@ def _annotate_frame(r, closest_box):
     return img
 
 def _process_frame(frame, PREVIEW_MODE=False):
-    results = _model()(frame, conf=0.375, verbose=False)
+    results = _model()(frame, conf=0.375, verbose=False, device=_DEVICE)
     r = results[0]
     h, w = r.orig_img.shape[:2]
     closest_box = _find_closest_box(r, w // 2, h // 2)

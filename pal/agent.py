@@ -164,8 +164,6 @@ class Pal:
         for frames in captures:
             observations = []
             for image, label, conf, taken_at in frames:
-                # A detector label says what it found; a whole scene gets its description once
-                # it has been looked at (_describe_loop), on the newest frame.
                 description = f"{label} in view" if label != "scene" else ""
                 capture_id = uuid4()
                 path = CAPTURES_DIR / f"{capture_id}.jpg"

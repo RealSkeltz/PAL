@@ -26,7 +26,7 @@ encoder, _ = load_encoder()
 
 SPEAKER_THRESHOLD = 0.5
 
-transcriber = WhisperModel("distil-small.en", device="auto", compute_type="float32", cpu_threads=4)
+transcriber = WhisperModel("large-v3-turbo", device="auto", compute_type="float32", cpu_threads=8)
 
 from pal.perception.hearing.vad import contains_speech
 
