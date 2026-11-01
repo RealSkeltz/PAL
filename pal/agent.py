@@ -42,6 +42,7 @@ from pal.config import CAPTURES_DIR, KNOWLEDGE_DIR
 from pal.perception.hearing import listen
 from pal.debug.preview import preview
 from pal.perception.vision import see
+from pal.perception.vision.objects import Objects
 from pal.perception.vision.describe import describe
 from pal.response.prompt import build_system_prompt, reflect_note, respond_note
 from pal.response.responder import respond
@@ -51,8 +52,8 @@ from pal.routing.system_one import client as gate_client
 from pal.log import record
 from pal.memory import Memory
 from pal.memory.recall import format_hits
-from pal.schemas.event import Actor, Observation, Role, Written
-from pal.schemas.turn import UserTurn
+from pal.schemas.event import Actor, Observation, Role, Spoken, Written
+from pal.schemas.turn import Delivery, PalTurn, UserTurn
 from pal.tools.builtin import BuiltinTools
 from pal.voice.sounds import heard_tone
 from pal.voice.voice import Voice
@@ -113,6 +114,7 @@ class Pal:
         self._responding = False
         self._reflecting = False
         self.turn_started_seeing = None  # epoch seconds of the first unseen event the current turn sees
+        self.objects = None  # object recognition (Objects) while detection is on; in view, and named by tools
 
         # Controls
         self.look_requests: queue.Queue = queue.Queue()  # when each question started; see.run answers
@@ -134,13 +136,15 @@ class Pal:
     def run(self, text_mode: bool = False, detect: bool = False):
         """Start the agent. `detect` turns on object detection and recognition on the camera."""
         self.detect = detect
+        if detect:
+            self.objects = Objects()
         self.voice.start()
         if self.remote is not None:
             self.remote.start()
         hearing = listen.run(on_user_speaking=self._on_user_speaking, mic=self.remote is None)
         frames = self.remote.frames(see.TARGET_FPS) if self.remote is not None else None
         _thread(self._feed, self._text_input() if text_mode else hearing)
-        _thread(self._feed_captures, see.run(self.look_requests, detect=self.detect, frames=frames))
+        _thread(self._feed_captures, see.run(self.look_requests, detect=self.detect, frames=frames, objects=self.objects))
         _thread(self.router.run, self.events)
         _thread(self._agent_loop)
         _thread(self._warm_up)
@@ -289,7 +293,7 @@ class Pal:
                         _thread(self._await_gate, looked, hold, discard)
                     discarded = respond(self.memory.history, pending, self.system_prompt, self.client, self.voice,
                                         tools=self.tool_handler, cancel=self.cancel, hold=hold, discard=discard,
-                                        note=respond_note(self.memory.view(), unseen))
+                                        note=respond_note(self.memory.view(), unseen, self._in_view()))
                     if not discarded:
                         self.memory.mark_seen(seen_until)
                 finally:
@@ -328,9 +332,11 @@ class Pal:
         done = []
         try:
             for event in run_turn(self.memory.history, self.system_prompt, self.client, self.tool_handler,
-                                  self.cancel, note=reflect_note(self.memory.view(), unseen)):
+                                  self.cancel, note=reflect_note(self.memory.view(), unseen, self._in_view())):
                 if isinstance(event, ToolFinished):
                     done.append(event.action)
+                    if event.action.tool == "ask_user":
+                        break  # the user's answer is a new turn; this one is done
         except Exception:
             logger.exception("reflecting failed")
             self.memory.mark_seen(seen_until)  # don't retry the same notes every second
@@ -342,6 +348,19 @@ class Pal:
             self.memory.mark_seen(seen_until)
         what = "; ".join(f"{a.tool}({', '.join(f'{k}={v!r}' for k, v in a.args.items())})" for a in done)
         logger.info(f"reflected ({time.time() - start:.1f}s{', cut off' if cut else ''}): {what or 'nothing to change'}")
+
+    def _in_view(self) -> str:
+        return self.objects.in_view() if self.objects is not None else ""
+
+    def ask(self, question: str):
+        """Say a question to the user and keep it as PAL's turn (for `ask_user`). Their answer comes
+        within the conversation window, so it's routed to PAL with the question in context."""
+        logger.info(f"asked: {question}", extra={"speech": ("pal", question)})
+        self.voice.say(question)
+        self.memory.add_turn(PalTurn(in_reply_to=[], delivery=Delivery.DONE,
+                                     utterance=Spoken(actor=Actor.PAL, role=Role.DIRECT, text=question)))
+        self.voice.wait(self.cancel)
+        self.last_spoke_at = time.time()
 
     def _await_gate(self, looked, hold: threading.Event, discard: threading.Event):
         """Let a reply begun without looking go on, or drop it if the gate looks after all."""

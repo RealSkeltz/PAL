@@ -36,7 +36,7 @@ perception ──► events ──► router ──► memory ──► responde
 
 - `pal/agent.py` wires the threads together (`Pal.run`).
 - `pal/perception/hearing/listen.py`: speech in, transcribed, scored against the user's voiceprint.
-- `pal/perception/vision/see.py`: camera, looks (whole frames from a rolling buffer), object recognition (`Objects`).
+- `pal/perception/vision/`: `see.py` is the capture loop (looks are whole frames from a rolling buffer, `camera.py`); object recognition is `detect.py` (YOLOE + tracking), `embed.py` (DINOv2), `stored.py` (the stored objects, with keys), `objects.py` (`Objects`: following, recognizing, what's in view) and `draw.py`.
 - `pal/routing/`: `router.py` sorts events into turns and context; `gate.py` + `system_one.py` are the gate.
 - `pal/response/`: `responder.py` runs a reply and speaks it; `run_turn.py` is the model/tool loop; `client_turns.py` turns history into what the model sees.
 - `pal/memory/`: everything PAL knows (context, history, situation, user facts, goals, episodes, reference documents) plus hybrid recall (BM25 + vectors). `store.py` holds it, with the seen marker and the edits the agent makes.
