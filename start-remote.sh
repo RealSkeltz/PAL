@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One command for a phone session: Ollama (if the model needs it), livekit-server,
-# and PAL in remote mode. Extra arguments go to main.py, e.g. ./start-remote.sh --verbose
+# and PAL in remote mode with object detection. Extra arguments go to main.py, e.g. ./start-remote.sh --verbose
 # Ctrl+C stops everything this script started.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -67,4 +67,4 @@ echo "  In the phone app, connect to: $ip  ($network)"
 echo
 
 LIVEKIT_URL="${LIVEKIT_URL:-ws://$local_check:7880}" PAL_TOKEN_HOST="$listen" \
-    poetry run python main.py --remote --preview "$@"
+    poetry run python main.py --remote --preview --yolo "$@"

@@ -16,7 +16,7 @@ def main():
     parser.add_argument("--knowledge", action="append", default=[], metavar="PATH",
                         help="Extra reference material (.md/.txt file or folder) for this run, on top of data/knowledge/")
     parser.add_argument("--yolo", action="store_true",
-                        help="Run object detection and send a crop of the object nearest the center, instead of the whole frame")
+                        help="Run object detection: follow and recognize objects on the camera, shown in the preview")
     parser.add_argument("--remote", action="store_true",
                         help="Use a remote device (the phone app, over LiveKit) as mic, camera and speaker instead of this laptop")
     parser.add_argument("--verbose", action="store_true",

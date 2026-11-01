@@ -1,0 +1,16 @@
+# BoT-SORT, tuned for a head- or chest-worn camera. Pass the detector a low conf (0.1) so
+# the tracker sees weak detections too: it keeps tracks alive through dips with them,
+# while only confident detections can start a track.
+tracker_type: botsort
+track_high_thresh: 0.375  # first-stage matching; the detector's old conf threshold
+track_low_thresh: 0.1     # second stage: weak detections may continue a track, never start one
+new_track_thresh: 0.4     # a new track needs at least this
+track_buffer: 30          # frames a lost track is kept, ~3 s at 10 fps
+match_thresh: 0.8
+fuse_score: True
+
+gmc_method: sparseOptFlow  # compensates for the camera moving with the wearer's head or body
+proximity_thresh: 0.5
+appearance_thresh: 0.8
+with_reid: False
+model: auto

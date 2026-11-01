@@ -8,6 +8,10 @@ dist/
 
 # Model weights (large binaries — fetch separately)
 models/
+# YOLOE's text model; ultralytics looks for it in the working directory
+mobileclip2_*.ts
 
 # Runtime output
 data/
+pal/perception/vision/vectors.json
+pal/perception/vision/crops/

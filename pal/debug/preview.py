@@ -50,6 +50,15 @@ HTML_PAGE = """<!DOCTYPE html>
   #sent img { display: block; height: 96px; border: 2px solid var(--you); border-radius: 4px; }
   #sent figcaption { color: var(--text); text-shadow: 0 1px 3px #000; }
   #stage.sending { box-shadow: inset 0 0 0 4px var(--you); }
+  /* objects stored or recognized: a card each, newest on top, fading out */
+  #objects { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 8px;
+             align-items: flex-end; }
+  .obj { display: flex; gap: 10px; align-items: center; padding: 6px 12px 6px 6px; border-radius: 6px;
+         background: rgba(0,0,0,.75); border-left: 4px solid var(--c); color: var(--text);
+         font: 14px/1.3 system-ui, sans-serif; transition: opacity 1s; }
+  .obj img { height: 64px; border-radius: 4px; }
+  .obj .kind { font: 11px monospace; color: var(--c); text-transform: uppercase; letter-spacing: .05em; }
+  .obj .sim { font: 11px monospace; color: var(--faint); }
   #subs { position: absolute; left: 0; right: 0; bottom: 0; padding: 48px 24px 20px;
           background: linear-gradient(transparent, rgba(0,0,0,.85) 40%);
           font: 18px/1.45 system-ui, sans-serif; color: var(--text); }
@@ -132,6 +141,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <div id="stage">
   <img id="frame" alt="">
   <div id="sent"></div>
+  <div id="objects"></div>
   <div id="subs"></div>
 </div>
 <aside id="side">
@@ -428,6 +438,28 @@ HTML_PAGE = """<!DOCTYPE html>
     }, SENT_SHOW_MS - age - 1000);
   }
 
+  const OBJECT_SHOW_MS = 6000, MAX_OBJECTS = 4;
+  function showObject({ t, kind, src, identity, similarity }) {
+    const age = Date.now() - t * 1000;
+    if (age > OBJECT_SHOW_MS) return;  // replayed history from before this page opened
+    const card = document.createElement('div');
+    card.className = 'obj';
+    card.style.setProperty('--c', kind === 'stored' ? '#199e70' : '#3987e5');
+    const img = document.createElement('img');
+    img.src = src;
+    const text = document.createElement('div');
+    const k = document.createElement('div'); k.className = 'kind'; k.textContent = kind;
+    const who = document.createElement('div'); who.textContent = identity;
+    const sim = document.createElement('div'); sim.className = 'sim';
+    sim.textContent = kind === 'stored' ? `new, closest ${similarity.toFixed(2)}` : `match ${similarity.toFixed(2)}`;
+    text.append(k, who, sim);
+    card.append(img, text);
+    const box = $('objects');
+    box.prepend(card);
+    while (box.children.length > MAX_OBJECTS) box.lastChild.remove();
+    setTimeout(() => { card.style.opacity = 0; setTimeout(() => card.remove(), 1000); }, OBJECT_SHOW_MS - age - 1000);
+  }
+
   function clearAll() {
     log.replaceChildren(); subs.replaceChildren(); utterances = []; livePoints = []; replies = [];
     $('latbars').replaceChildren(); $('hits').replaceChildren();
@@ -451,6 +483,7 @@ HTML_PAGE = """<!DOCTYPE html>
       else if (msg.speech) addSpeech(msg.speech);
       else if (msg.utterance) addUtterance(msg.utterance);
       else if (msg.sent) showSent(msg.sent);
+      else if (msg.object) showObject(msg.object);
       else if (msg.live) livePoints.push(msg.live);
       else if (msg.log) addLog(msg.log);
       else if (msg.latency) addLatency(msg.latency);
@@ -582,6 +615,18 @@ class PreviewServer:
             if ok:
                 thumbs.append({"src": "data:image/jpeg;base64," + base64.b64encode(buf).decode(), "ago": ago})
         self._push({"sent": {"t": time.time(), "frames": thumbs}})
+
+    def show_object(self, kind: str, crop, identity: str, similarity: float):
+        """An object just "stored" as new or "recognized" as `identity`: a card with its crop,
+        shown over the image for a while."""
+        if not self._enabled:
+            return
+        h, w = crop.shape[:2]
+        small = cv2.resize(crop, (max(1, int(w * 128 / h)), 128), interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        if ok:
+            self._push({"object": {"t": time.time(), "kind": kind, "identity": identity, "similarity": similarity,
+                                   "src": "data:image/jpeg;base64," + base64.b64encode(buf).decode()}})
 
     # ----- internals -----
 

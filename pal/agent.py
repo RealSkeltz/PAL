@@ -99,7 +99,7 @@ class Pal:
 
         # Controls
         self.look_requests: queue.Queue = queue.Queue()  # when each question started; see.run answers
-        self.detect = False  # YOLO off by default; run(detect=True) turns it on
+        self.detect = False  # object detection off by default; run(detect=True) turns it on
 
         self._looking: dict = {}  # user turn id -> Future of its frames, while the gate decides
 
@@ -115,7 +115,7 @@ class Pal:
                     f"prompt cache {'on' if os.environ.get('PAL_PROMPT_CACHE', '1') != '0' else 'off'})")
 
     def run(self, text_mode: bool = False, detect: bool = False):
-        """Start the agent. `detect` toggles YOLO object detection on the camera."""
+        """Start the agent. `detect` turns on object detection and recognition on the camera."""
         self.detect = detect
         self.voice.start()
         if self.remote is not None:

@@ -35,6 +35,8 @@ dependencies = [
     "livekit (>=1.1.21,<2.0.0)",
     "livekit-api (>=1.2.2,<2.0.0)",
     "fastapi (>=0.146.0,<0.147.0)",
+    "ftfy (>=6.3.1,<7.0.0)",
+    "clip @ git+https://github.com/ultralytics/CLIP.git@7ffa84b3bfa40c42ecc1c77147a855e69cb2dd40",
 ]
 
 
