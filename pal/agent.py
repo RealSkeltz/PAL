@@ -1,10 +1,20 @@
 """Wires PAL together. Each stage runs on its own thread:
 
-    senses ──► events ──► router ──► memory ──► responder ──► voice
+    senses ──► events ──► router ──► memory ──► agent ──► voice
                   camera ──► captures ──┘ (frames attached to user turns)
 
-The router only appends user turns and wakes the responder; the responder
-answers every pending user turn at once.
+The router only appends user turns and events, and wakes the agent. The agent
+loop (`_agent_loop`) has two modes, on one memory it keeps itself:
+
+    respond   there's a question for PAL: answer every pending user turn at once,
+              and update memory with tools where the exchange calls for it
+    reflect   nothing is waiting, but there are events PAL hasn't seen yet (speech
+              not for it, looks): after a quiet moment, update memory with tools;
+              nothing is said aloud
+
+Every turn ends with a note of what PAL knows and what it hasn't seen yet
+(`pal.response.prompt`), and marks those events seen once it's done. A
+question for PAL always goes first: it cuts off a reflect turn.
 
 Barge-in: as soon as the user's voice is recognised while Buddy talks (from
 about half a second of speech), Buddy stops (`self.cancel`). Other voices and
@@ -33,8 +43,9 @@ from pal.perception.hearing import listen
 from pal.debug.preview import preview
 from pal.perception.vision import see
 from pal.perception.vision.describe import describe
-from pal.response.prompt import build_system_prompt
+from pal.response.prompt import build_system_prompt, reflect_note, respond_note
 from pal.response.responder import respond
+from pal.response.run_turn import ToolFinished, run_turn
 from pal.routing.router import EventRouter
 from pal.routing.system_one import client as gate_client
 from pal.log import record
@@ -63,6 +74,10 @@ AUTO_KNOWLEDGE_K = 3
 # remote response model: a local one would share the machine with the gate and slow it down.
 PARALLEL_GATE = os.environ.get("PAL_PARALLEL_GATE", "1") != "0"
 REMOTE_PROVIDERS = ("anthropic", "foundry")
+# Reflect once nothing new has come in for this long, so a burst of talk is taken in at once;
+# in talk that never pauses, at the latest this long after the first unseen event.
+REFLECT_QUIET_SECONDS = 5
+REFLECT_MAX_WAIT_SECONDS = 60
 
 
 class Pal:
@@ -75,7 +90,7 @@ class Pal:
 
         # State
         self.embedder = get_client(EMBEDDING_MODEL)
-        self.memory = Memory(self.client, self.embedder)
+        self.memory = Memory(self.embedder)
         self.knowledge_paths = list(knowledge or [])  # on top of KNOWLEDGE_DIR, for this run
         self.last_image = None  # read by the save_last_image tool
         self.last_spoke_at = 0.0
@@ -96,6 +111,8 @@ class Pal:
         self._wake = threading.Event()
         self._lock = threading.Lock()
         self._responding = False
+        self._reflecting = False
+        self.turn_started_seeing = None  # epoch seconds of the first unseen event the current turn sees
 
         # Controls
         self.look_requests: queue.Queue = queue.Queue()  # when each question started; see.run answers
@@ -125,9 +142,8 @@ class Pal:
         _thread(self._feed, self._text_input() if text_mode else hearing)
         _thread(self._feed_captures, see.run(self.look_requests, detect=self.detect, frames=frames))
         _thread(self.router.run, self.events)
-        _thread(self._respond_loop)
+        _thread(self._agent_loop)
         _thread(self._warm_up)
-        _thread(self.memory.watch, lambda: self._responding or self.voice.busy)
         _thread(self.memory.index_loop)
         _thread(self._describe_loop)
         _thread(self.memory.knowledge.load, [KNOWLEDGE_DIR, *self.knowledge_paths])
@@ -216,6 +232,8 @@ class Pal:
         if self._responding:
             logger.info("barge-in: cutting off the current reply")
             self.cancel.set()
+        elif self._reflecting:
+            self.cancel.set()  # a question for PAL goes first; what wasn't reflected on stays unseen
         with self._lock:
             self.idle.clear()
             self._wake.set()
@@ -243,12 +261,15 @@ class Pal:
                             + self.memory.knowledge.format(knowledge))
         return "\n".join(sections)
 
-    def _respond_loop(self):
+    def _agent_loop(self):
         restarting = False  # a reply begun before the gate looked, being started over
         while True:
-            self._wake.wait()
+            self._wake.wait(timeout=1.0)  # also wakes now and then, to see if it's time to reflect
             self._wake.clear()
             pending = self.memory.pending()
+            if not pending and self._time_to_reflect():
+                self._reflect()
+                continue
             if pending:
                 self.cancel.clear()
                 self._responding = True
@@ -259,16 +280,18 @@ class Pal:
                 discarded = False
                 try:
                     pending[-1].recalled = self._recalled(pending)
-                    # Fixed prompt first, memory's background second: they're cached apart
-                    system = [p for p in (self.system_prompt, self.memory.background()) if p]
+                    seen_until, unseen = self._start_seeing()
                     looked = self._looking.pop(pending[-1].id, None)
                     hold = discard = None
                     # Already decided (the gate beat the reply here): any frames are on the turn
                     if looked is not None and not looked.done():
                         hold, discard = threading.Event(), threading.Event()
                         _thread(self._await_gate, looked, hold, discard)
-                    discarded = respond(self.memory.history, pending, system, self.client, self.voice,
-                                        tools=self.tool_handler, cancel=self.cancel, hold=hold, discard=discard)
+                    discarded = respond(self.memory.history, pending, self.system_prompt, self.client, self.voice,
+                                        tools=self.tool_handler, cancel=self.cancel, hold=hold, discard=discard,
+                                        note=respond_note(self.memory.view(), unseen))
+                    if not discarded:
+                        self.memory.mark_seen(seen_until)
                 finally:
                     self._responding = False
                 restarting = discarded
@@ -279,6 +302,46 @@ class Pal:
             with self._lock:
                 if not self._wake.is_set():
                     self.idle.set()
+
+    def _start_seeing(self) -> tuple[int, str]:
+        """What the next turn hasn't seen yet, and where that ends (for `mark_seen`)."""
+        span = self.memory.unseen_span()
+        self.turn_started_seeing = span[0] if span else None
+        return self.memory.unseen()
+
+    def _time_to_reflect(self) -> bool:
+        """Unseen events worth a note, and either a quiet moment or they've waited long enough."""
+        span = self.memory.unseen_span()
+        if span is None or self.voice.busy:
+            return False
+        first, latest = span
+        now = time.time()
+        return now - latest >= REFLECT_QUIET_SECONDS or now - first >= REFLECT_MAX_WAIT_SECONDS
+
+    def _reflect(self):
+        """A reflect turn: the agent takes in what it hasn't seen and keeps its memory up to date
+        with tools. What it writes is thrown away. Cut off by a question for PAL (`self.cancel`)."""
+        seen_until, unseen = self._start_seeing()
+        self.cancel.clear()
+        self._reflecting = True
+        start = time.time()
+        done = []
+        try:
+            for event in run_turn(self.memory.history, self.system_prompt, self.client, self.tool_handler,
+                                  self.cancel, note=reflect_note(self.memory.view(), unseen)):
+                if isinstance(event, ToolFinished):
+                    done.append(event.action)
+        except Exception:
+            logger.exception("reflecting failed")
+            self.memory.mark_seen(seen_until)  # don't retry the same notes every second
+            return
+        finally:
+            self._reflecting = False
+        cut = self.cancel.is_set()
+        if not cut:
+            self.memory.mark_seen(seen_until)
+        what = "; ".join(f"{a.tool}({', '.join(f'{k}={v!r}' for k, v in a.args.items())})" for a in done)
+        logger.info(f"reflected ({time.time() - start:.1f}s{', cut off' if cut else ''}): {what or 'nothing to change'}")
 
     def _await_gate(self, looked, hold: threading.Event, discard: threading.Event):
         """Let a reply begun without looking go on, or drop it if the gate looks after all."""
@@ -291,8 +354,11 @@ class Pal:
     # --- Inputs --------------------------------------------------------------
 
     def _text_input(self):
-        """Replaces the microphone: read messages from stdin."""
-        print("[Text mode] Type messages and press Enter. Ctrl+D to quit.")
+        """Replaces the microphone: read messages from stdin. A line is said to PAL, unless it starts
+        with "> " (the user, not to PAL) or "other: " (someone else): then it's overheard, as in a
+        conversation around the user, which is what reflect turns are for."""
+        print("[Text mode] Type messages and press Enter. Ctrl+D to quit.\n"
+              "  '> text' is you, not to PAL; 'other: text' is someone else. Both are only overheard.")
         while True:
             self.idle.wait()
             try:
@@ -302,5 +368,10 @@ class Pal:
                 break
             if not line:
                 continue
-            self.idle.clear()
-            yield Written(actor=Actor.USER, role=Role.DIRECT, text=line)
+            if line.startswith(">"):
+                yield Written(actor=Actor.USER, role=Role.CONTEXT, text=line[1:].strip())
+            elif line.lower().startswith("other:"):
+                yield Written(actor=Actor.OTHER, role=Role.CONTEXT, text=line[6:].strip())
+            else:
+                self.idle.clear()  # wait for the reply before asking for the next line
+                yield Written(actor=Actor.USER, role=Role.DIRECT, text=line)

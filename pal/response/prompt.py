@@ -1,6 +1,10 @@
-"""Assemble PAL's system prompt from the markdown fragments in system_prompt/.
+"""Assemble PAL's system prompt from the markdown fragments in system_prompt/, and the
+note that ends each agent turn.
 
-The fragments that exist are stitched into a single prompt.
+The fragments that exist are stitched into a single prompt. What PAL knows and
+what it hasn't seen yet change all the time, so they go at the end of the
+conversation instead: in the system prompt, every change would make the
+cached conversation after it useless.
 """
 from pathlib import Path
 
@@ -31,3 +35,24 @@ def build_system_prompt(context_dir: Path = PROMPT_DIR) -> str:
         sections.append("## Task context\n\n" + domain)
 
     return "\n\n".join(sections)
+
+
+def respond_note(view: str, unseen: str) -> str:
+    """Ends a reply turn: what happened around the user that wasn't said to PAL, and what PAL knows."""
+    since = f"Not said to you, since your last turn:\n{unseen}\n\n" if unseen else ""
+    return (f"[For context; answer the user's message above.\n\n{since}What you know (keys in brackets):\n{view}\n\n"
+            "If this exchange changes something lasting or the situation, update your memory after answering.]")
+
+
+def reflect_note(view: str, unseen: str) -> str:
+    """Ends a reflect turn: what's new, what PAL knows, and what to do with it."""
+    return ("[A quiet moment. Nobody is waiting for an answer, and nothing you write is said aloud.\n\n"
+            f"Since you last looked:\n{unseen}\n\nWhat you know (keys in brackets):\n{view}\n\n"
+            "Bring your memory up to date with your tools, each thing in its own place:\n"
+            "- situation: only where the user is, what they're doing, and who is physically there, in a few words\n"
+            "- remember: lasting facts, such as who someone is to the user ('Mark: the user's brother') or a preference\n"
+            "- add_goal / update_goal: what the user is trying to get done, with deadlines ('frost the cake before six')\n"
+            "- log_episode: one sentence for anything worth remembering later\n"
+            "Change only what the new notes support and leave the rest; revise an item by its key rather than "
+            "adding it again; when nothing needs changing, call nothing. Describe the user's world, not their use "
+            "of you. A single hint is a guess with low confidence. Reply with only '-'.]")

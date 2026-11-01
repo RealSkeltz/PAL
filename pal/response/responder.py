@@ -20,6 +20,7 @@ from pal.log import record
 from pal.schemas.event import Actor, Role, Spoken
 from pal.schemas.turn import ConversationTurn, Delivery, PalTurn, Response, UserTurn
 from pal.tools.base import ToolHandler
+from pal.tools.memory_tools import MEMORY_TOOLS
 from pal.voice.sounds import tool_tone
 from pal.voice.voice import Voice
 
@@ -39,17 +40,23 @@ def respond(
     sinks: list[Sink] | None = None,
     hold: threading.Event | None = None,
     discard: threading.Event | None = None,
+    note: str | None = None,
 ) -> bool:
     """Answer `user_turns`. With `hold`, the reply was started before the gate decided whether
     to look: nothing is said and no tool runs until `hold` is set. If `discard` is set instead
     (the gate wants to look, and `cancel` is set with it), the reply is dropped without a trace
-    and the user turns are pending again, to be answered with the frames. True if discarded."""
+    and the user turns are pending again, to be answered with the frames. `note` goes after the
+    conversation, for this turn only. True if discarded."""
     cancel = cancel or threading.Event()
     sinks = default_sinks(voice) if sinks is None else sinks
     reply_id = uuid4()             # voice tags are (reply_id, step), unique per reply
     sentences = SentenceBuffer()
     recorded: list[tuple[int, PalTurn]] = []
     step, partial = 0, ""          # partial: this step's text so far, for a cut-off generation
+    # After an answer, a step that only updated memory gets the model writing again, mostly to confirm
+    # the update aloud; the prompt asks it not to, but that only holds about half the time. So that
+    # next step's text isn't said (nor kept as said). Before anything was said, it's the answer itself.
+    unspoken = False
 
     start = time.time()
     first_text = first_sentence = None
@@ -64,6 +71,8 @@ def respond(
     def say(text):
         if cancel.is_set():
             return  # cut off; don't start a new sentence after the voice was stopped
+        if unspoken:
+            return
         if hold is not None and not hold.is_set():
             held.append((text, step))
             return
@@ -81,7 +90,7 @@ def respond(
 
     status = Response.RESPONDED
     try:
-        for event in run_turn(history, system_prompt, client, tools, cancel):
+        for event in run_turn(history, system_prompt, client, tools, cancel, note=note):
             if held and hold.is_set():
                 wait_for_gate()
             if isinstance(event, ToolStarted) and hold is not None:
@@ -98,14 +107,20 @@ def respond(
             if isinstance(event, StepDone):
                 for sentence in sentences.flush():
                     say(sentence)
-                if event.text or event.actions:
+                text = event.text
+                if unspoken and text:
+                    logger.info(f"not said, after a memory update: {text}")
+                    text = ""
+                if text or event.actions:
                     turn = PalTurn(
                         in_reply_to=[t.id for t in user_turns],
-                        utterance=Spoken(actor=Actor.PAL, role=Role.DIRECT, text=event.text) if event.text else None,
+                        utterance=Spoken(actor=Actor.PAL, role=Role.DIRECT, text=text) if text else None,
                         actions=event.actions,
                     )
                     _insert_reply(history, turn, user_turns)
                     recorded.append((step, turn))
+                answered = any(t.utterance for _, t in recorded)
+                unspoken = answered and bool(event.actions) and all(a.tool in MEMORY_TOOLS for a in event.actions)
                 step, partial = step + 1, ""
         wait_for_gate()
         voice.wait(cancel)
@@ -125,7 +140,7 @@ def respond(
     if cancel.is_set():
         voice.stop()
         status = Response.CANCELLED
-        if partial.strip():  # cut off while the model was still writing this step
+        if partial.strip() and not unspoken:  # cut off while the model was still writing this step
             turn = PalTurn(in_reply_to=[t.id for t in user_turns],
                            utterance=Spoken(actor=Actor.PAL, role=Role.DIRECT, text=partial.strip()))
             _insert_reply(history, turn, user_turns)
@@ -240,7 +255,8 @@ def default_sinks(voice: Voice) -> list[Sink]:
 
 def tool_sound(voice: Voice) -> Sink:
     def sink(event: AgentEvent):
-        if isinstance(event, ToolStarted):
+        # Keeping memory is the agent's own business; the user only hears tools that do something for them
+        if isinstance(event, ToolStarted) and event.action.tool not in MEMORY_TOOLS:
             voice.play(tool_tone())
     return sink
 

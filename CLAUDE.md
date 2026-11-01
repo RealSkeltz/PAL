@@ -1,7 +1,7 @@
 # PAL
 
 PAL is a wearable voice assistant ("Buddy" is the name it answers to). The wearer has a
-camera (chest or, soon, eye level), a microphone and an earpiece (Shokz bone-conduction
+camera (eye level), a microphone and an earpiece (Shokz bone-conduction
 headphones); PAL listens, looks when it helps, remembers what happened, and answers in
 the earpiece. The longer-term aim is an assistant that learns the wearer's world: the
 people, places and things around them. A demo for security personnel (a guard on patrol)

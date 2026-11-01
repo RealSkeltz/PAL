@@ -6,7 +6,7 @@ how it is known, how sure Buddy is, and when it was last supported, so a single
 overheard remark stays a tentative guess, and items nothing supports anymore
 can fade.
 
-It is replaced as a whole on every update, so it is frozen like an event.
+The agent sets it as a whole (`Memory.set_situation`), so it is frozen like an event.
 """
 from dataclasses import field
 from datetime import datetime, timezone
@@ -29,6 +29,7 @@ def _now() -> datetime:
 
 @dataclass(frozen=True, kw_only=True)
 class Fact:
+    key: str = ""  # short and stable, e.g. "u3": what the agent's memory tools refer to
     text: str
     source: Source
     confidence: Annotated[float, Field(ge=0, le=1)]

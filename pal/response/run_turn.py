@@ -53,9 +53,13 @@ def run_turn(
     tools: ToolHandler | None = None,
     cancel: threading.Event | None = None,
     max_steps: int = MAX_STEPS,
+    note: str | None = None,
 ) -> Iterator[AgentEvent]:
-    """Stops early, without a final StepDone, when `cancel` is set."""
+    """Stops early, without a final StepDone, when `cancel` is set. `note` goes after the
+    conversation, for this turn only (see `pal.response.prompt`)."""
     conversation = to_client_turns(history)
+    if note:
+        conversation.append(Turn(role="user", text=note))
     specs = tools.specs if tools else []
     cancelled = lambda: cancel is not None and cancel.is_set()
 

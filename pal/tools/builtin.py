@@ -1,4 +1,4 @@
-"""Tools every Pal gets: notes, timers, saving the last captured frame."""
+"""Tools every Pal gets: its memory tools, notes, timers, saving the last captured frame."""
 import json
 import logging
 import time
@@ -7,12 +7,13 @@ import threading
 import cv2
 
 from pal.config import NOTES_FILE, SAVED_IMAGES_DIR
-from pal.tools.base import ToolHandler, tool
+from pal.tools.base import tool
+from pal.tools.memory_tools import MemoryTools
 
 logger = logging.getLogger(__name__)
 
 
-class BuiltinTools(ToolHandler):
+class BuiltinTools(MemoryTools):
     def __init__(self, pal):
         super().__init__(pal)
         self._load_notes()

@@ -25,6 +25,7 @@ class Status(StrEnum):
 @dataclass(frozen=True, kw_only=True)
 class Goal:
     id: UUID = field(default_factory=uuid4)
+    key: str = ""  # short and stable, e.g. "g2": what the agent's memory tools refer to
     text: str
     source: Source
     confidence: Annotated[float, Field(ge=0, le=1)]

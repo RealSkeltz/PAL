@@ -22,7 +22,7 @@ from pal.debug import trace
 from pal.routing.gate import addressed_by_name, assess, within_conversation_window
 from pal.log import record
 from pal.memory import Memory
-from pal.schemas.event import Actor, Event, Language, Observation, Role, Spoken
+from pal.schemas.event import Actor, Event, Language, Observation, Role, Spoken, Written
 from pal.schemas.turn import UserTurn
 
 logger = logging.getLogger(__name__)
@@ -64,6 +64,9 @@ class EventRouter:
 
         if event.actor is not Actor.USER:
             self.memory.add_event(event)
+            return
+        if isinstance(event, Written) and event.role is Role.CONTEXT:
+            self.memory.add_event(event)  # typed as not for PAL (text mode's "> "), so no need to ask
             return
 
         via = self._via(event)
