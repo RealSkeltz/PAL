@@ -12,7 +12,7 @@ is one target; the software is meant to stay hardware-agnostic.
 ```bash
 poetry run python main.py --preview            # laptop mic, webcam and speaker; preview at http://127.0.0.1:4200
 ./start-remote.sh                              # phone app as mic/camera/earpiece over LiveKit + Tailscale, detection on
-poetry run python main.py --text               # type instead of speaking
+poetry run python main.py --text               # type instead of speaking; "> text" / "other: text" are overheard
 poetry run python -m pal.perception.vision.see # watch object detection and recognition on the webcam
 ```
 
@@ -39,31 +39,39 @@ perception ──► events ──► router ──► memory ──► responde
 - `pal/perception/vision/see.py`: camera, looks (whole frames from a rolling buffer), object recognition (`Objects`).
 - `pal/routing/`: `router.py` sorts events into turns and context; `gate.py` + `system_one.py` are the gate.
 - `pal/response/`: `responder.py` runs a reply and speaks it; `run_turn.py` is the model/tool loop; `client_turns.py` turns history into what the model sees.
-- `pal/memory/`: everything PAL knows (context, history, situation, user facts, goals, episodes, reference documents) plus hybrid recall (BM25 + vectors).
-- `pal/tools/builtin.py`: the agent's tools. `pal/llm/`: model clients (Anthropic/Foundry, ollama, gate, embeddings).
+- `pal/memory/`: everything PAL knows (context, history, situation, user facts, goals, episodes, reference documents) plus hybrid recall (BM25 + vectors). `store.py` holds it, with the seen marker and the edits the agent makes.
+- `pal/tools/`: the agent's tools; `memory_tools.py` is how it keeps its own memory. `pal/llm/`: model clients (Anthropic/Foundry, ollama, gate, embeddings).
 - `pal/remote.py` + `application/client/`: the Android app and its LiveKit link.
 - `pal/debug/preview.py`: the preview page (one HTML string, server-sent events).
 
-## Current work: the agent in control
+## The agent in control
 
-Branch off `development` for this. The goal is to move from several background loops that
-inform the agent to one agent that owns its picture of the world.
+The agent owns its picture of the world; perception and the gate only deliver facts.
 
-- **Now:** four memory updaters (situation, user facts, goals, episodes) run on a timer in
-  quiet moments (`memory.watch`), each with its own prompt and schema, and the reply loop
-  only reads their conclusions.
-- **Next:** one agent loop with two modes, on one memory:
-  - **respond** when there's a question for PAL: answer, and use tools (memory, objects, notes) where useful.
-  - **reflect** when there are unseen events (speech not for PAL, looks, objects stored or
-    recognized) and no question waiting: update memory through tools with targeted edits,
-    act internally (e.g. name a recognized person or object), and possibly ask the user
-    something. No call when nothing new happened.
+- **One agent loop** (`Pal._agent_loop`) with two modes, on one memory:
+  - **respond** when there's a question for PAL: answer, then update memory with tools where
+    the exchange calls for it.
+  - **reflect** when nothing is waiting but there are unseen events (speech not for PAL, looks
+    with their description): after 5 s without new input, at most 60 s after the first one,
+    update memory with tools. Nothing is said aloud. A question for PAL cuts it off.
+- **Memory is kept through tools** (`pal/tools/memory_tools.py`): `set_situation` (as a whole),
+  `remember` / `revise` / `forget` (user facts, people, preferences), `add_goal` / `update_goal`,
+  `log_episode`. Items have stable keys ("u3", "g2") the agent sees in `Memory.view()`; code keeps
+  the timestamps.
+- **Seen marker:** every turn gets the events after `Memory.seen`, and moves it on when done.
+- **Every turn ends with a note** (`pal/response/prompt.py`: `respond_note`, `reflect_note`) with
+  what PAL knows and what it hasn't seen. It's at the end of the conversation, not in the system
+  prompt, so memory edits don't break the prompt cache.
+- **Replies stay quiet about memory:** memory tools make no sound, and after an answer, a step that
+  only updated memory isn't followed by speech (`responder.py`); prompting alone held about half the time.
 - **The dividing line:** perception and the gate produce facts without judgment (transcribing,
-  detecting, embedding, retrieving, "is this for PAL"); everything that needs interpretation
-  goes to the agent. New capabilities are new tools, not new loops or gate categories.
-- **To get right:** "seen" as a marker every agent turn moves forward; memory shown with ids so
-  edits are targeted; memory placed after the history so edits don't break the prompt cache;
-  a question for PAL always pre-empts a reflect turn; episodes written by the agent too.
+  detecting, embedding, retrieving, "is this for PAL"); everything that needs interpretation goes
+  to the agent. New capabilities are new tools, not new loops or gate categories.
+
+Next on this track: object recognition events (stored/recognized) as events the agent sees, a
+tool to name recognized people and objects (people's names confirmed by the user first), and
+letting a reflect turn ask the user something. Known gap: if a reply misses something worth
+remembering, reflect doesn't catch it, since it only looks at events outside the conversation.
 
 Also known: with two people talking, speech recognition (large-v3-turbo on CPU, ~2 s per
 utterance, one at a time) falls behind. Ideas: transcribe queued utterances together, a
