@@ -37,22 +37,30 @@ def build_system_prompt(context_dir: Path = PROMPT_DIR) -> str:
     return "\n\n".join(sections)
 
 
-def respond_note(view: str, unseen: str) -> str:
-    """Ends a reply turn: what happened around the user that wasn't said to PAL, and what PAL knows."""
+def _in_view_text(in_view: str) -> str:
+    return f"In view right now (object recognition):\n{in_view}\n\n" if in_view else ""
+
+
+def respond_note(view: str, unseen: str, in_view: str = "") -> str:
+    """Ends a reply turn: what happened around the user that wasn't said to PAL, what's in view,
+    and what PAL knows."""
     since = f"Not said to you, since your last turn:\n{unseen}\n\n" if unseen else ""
-    return (f"[For context; answer the user's message above.\n\n{since}What you know (keys in brackets):\n{view}\n\n"
+    return (f"[For context; answer the user's message above.\n\n{since}{_in_view_text(in_view)}"
+            f"What you know (keys in brackets):\n{view}\n\n"
             "If this exchange changes something lasting or the situation, update your memory after answering.]")
 
 
-def reflect_note(view: str, unseen: str) -> str:
-    """Ends a reflect turn: what's new, what PAL knows, and what to do with it."""
+def reflect_note(view: str, unseen: str, in_view: str = "") -> str:
+    """Ends a reflect turn: what's new, what's in view, what PAL knows, and what to do with it."""
     return ("[A quiet moment. Nobody is waiting for an answer, and nothing you write is said aloud.\n\n"
-            f"Since you last looked:\n{unseen}\n\nWhat you know (keys in brackets):\n{view}\n\n"
+            f"Since you last looked:\n{unseen}\n\n{_in_view_text(in_view)}What you know (keys in brackets):\n{view}\n\n"
             "Bring your memory up to date with your tools, each thing in its own place:\n"
             "- situation: only where the user is, what they're doing, and who is physically there, in a few words\n"
             "- remember: lasting facts, such as who someone is to the user ('Mark: the user's brother') or a preference\n"
             "- add_goal / update_goal: what the user is trying to get done, with deadlines ('frost the cake before six')\n"
             "- log_episode: one sentence for anything worth remembering later\n"
+            "- update_object: a name or description for someone or something in view, when the notes make clear who or what it is\n"
+            "- ask_user: only if something you noticed is worth checking with the user; it's said aloud\n"
             "Change only what the new notes support and leave the rest; revise an item by its key rather than "
             "adding it again; when nothing needs changing, call nothing. Describe the user's world, not their use "
             "of you. A single hint is a guess with low confidence. Reply with only '-'.]")

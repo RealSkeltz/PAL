@@ -1,4 +1,4 @@
-"""Tools every Pal gets: its memory tools, notes, timers, saving the last captured frame."""
+"""Tools every Pal gets: its memory tools, asking the user, notes, timers, saving the last captured frame."""
 import json
 import logging
 import time
@@ -75,6 +75,17 @@ class BuiltinTools(MemoryTools):
     )
     def lookup(self, query: str) -> str:
         return self.pal.memory.knowledge.lookup_text(query)
+
+    @tool(
+        "Ask the user something, aloud, in a quiet moment when nobody is waiting for an answer: when "
+        "something you noticed is worth checking with them. Their answer comes as their next message. "
+        "In a reply, just ask in your answer instead.",
+        params={"question": {"type": "string", "description": "one short question, as you'd say it"}},
+        required=["question"],
+    )
+    def ask_user(self, question: str) -> str:
+        self.pal.ask(question)
+        return "Asked. Their answer comes as their next message; nothing more to do now."
 
     @tool(
         "Set a timer that will alert the user after a duration in seconds.",

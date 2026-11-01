@@ -1,7 +1,8 @@
 """The agent's memory tools: how it keeps its own picture of the user and their world.
 
 Every item in memory has a short key ("u3", "g2") that the agent sees in its
-view of memory and edits by. These run quietly: no tool sound, and nothing to
+view of memory and edits by; so does every object recognition has stored ("o4"),
+seen in what's in view. These run quietly: no tool sound, and nothing to
 confirm aloud, since keeping memory is the agent's own business.
 """
 from pal.tools.base import ToolHandler, tool
@@ -10,7 +11,8 @@ SOURCE = {"type": "string", "enum": ["told", "observed", "inferred"],
           "description": "told: the user said it to you; observed: seen or heard directly; inferred: concluded from clues"}
 CONFIDENCE = {"type": "number", "description": "0 to 1; a single hint is a guess, raise it as more supports it"}
 
-MEMORY_TOOLS = {"set_situation", "remember", "revise", "forget", "add_goal", "update_goal", "log_episode"}
+MEMORY_TOOLS = {"set_situation", "remember", "revise", "forget", "add_goal", "update_goal", "log_episode",
+                "update_object"}
 
 
 # Appended to every memory tool's result: a tool result gets the model writing again, and it
@@ -96,3 +98,18 @@ class MemoryTools(ToolHandler):
     def log_episode(self, what: str, who: list[str] | None = None, goals: list[str] | None = None) -> str:
         self.pal.memory.log_episode(what, who or [], goals or [], since=self.pal.turn_started_seeing)
         return "Episode logged."
+
+    @tool(
+        "Name or describe a person, animal or thing object recognition has stored, by its key (as in what's "
+        "in view), so it's known by that from now on: e.g. 'Anna' for a person, 'my keys' for keys, or a "
+        "short description of what makes it recognizable.",
+        params={"key": {"type": "string"}, "name": {"type": "string"},
+                "description": {"type": "string", "description": "a few words, e.g. 'black leather keyring'"}},
+        required=["key"],
+    )
+    def update_object(self, key: str, name: str | None = None, description: str | None = None) -> str:
+        if self.pal.objects is None:
+            return "Object recognition is off."
+        if not self.pal.objects.update_object(key, name, description):
+            return f"Nothing is stored as {key}."
+        return f"Updated {key}."
